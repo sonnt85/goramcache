@@ -1,4 +1,4 @@
-package cache
+package goramcache
 
 import (
 	"crypto/rand"
