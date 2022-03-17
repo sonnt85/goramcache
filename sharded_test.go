@@ -1,5 +1,6 @@
 package goramcache
 
+/*
 import (
 	"strconv"
 	"sync"
@@ -83,3 +84,4 @@ func benchmarkShardedCacheGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StartTimer()
 	wg.Wait()
 }
+*/
