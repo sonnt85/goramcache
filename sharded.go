@@ -1,6 +1,5 @@
 package goramcache
 
-/*
 import (
 	"crypto/rand"
 	"math"
@@ -20,15 +19,15 @@ import (
 //
 // See cache_test.go for a few benchmarks.
 
-type unexportedShardedCache struct {
-	*shardedCache
+type unexportedShardedCache[T comparable] struct {
+	*shardedCache[T]
 }
 
-type shardedCache struct {
+type shardedCache[T comparable] struct {
 	seed    uint32
 	m       uint32
-	cs      []*cache
-	janitor *shardedJanitor
+	cs      []*cache[T]
+	janitor *shardedJanitor[T]
 }
 
 // djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
@@ -63,43 +62,41 @@ func djb33(seed uint32, k string) uint32 {
 	return d ^ (d >> 16)
 }
 
-func (sc *shardedCache) bucket(k string) *cache {
+func (sc *shardedCache[T]) bucket(k string) *cache[T] {
 	return sc.cs[djb33(sc.seed, k)%sc.m]
 }
 
-func (sc *shardedCache) Set(k string, x interface{}, d time.Duration) {
+func (sc *shardedCache[T]) Set(k string, x T, d time.Duration) {
 	sc.bucket(k).Set(k, x, d)
 }
 
-func (sc *shardedCache) Add(k string, x interface{}, d time.Duration) error {
+func (sc *shardedCache[T]) Add(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Add(k, x, d)
 }
 
-func (sc *shardedCache) Replace(k string, x interface{}, d time.Duration) error {
+func (sc *shardedCache[T]) Replace(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Replace(k, x, d)
 }
 
-func (sc *shardedCache) Get(k string) (interface{}, bool) {
+func (sc *shardedCache[T]) Get(k string) (interface{}, bool) {
 	return sc.bucket(k).Get(k)
 }
 
-func (sc *shardedCache) Increment(k string, n int64) error {
-	return sc.bucket(k).Increment(k, n)
+func (sc *shardedCache[T]) Increment(k string, n int64) error {
+	_, err := sc.bucket(k).Increment(k, n)
+	return err
 }
 
-func (sc *shardedCache) IncrementFloat(k string, n float64) error {
-	return sc.bucket(k).IncrementFloat(k, n)
+func (sc *shardedCache[T]) Decrement(k string, n int64) error {
+	_, err := sc.bucket(k).Decrement(k, n)
+	return err
 }
 
-func (sc *shardedCache) Decrement(k string, n int64) error {
-	return sc.bucket(k).Decrement(k, n)
-}
-
-func (sc *shardedCache) Delete(k string) {
+func (sc *shardedCache[T]) Delete(k string) {
 	sc.bucket(k).Delete(k)
 }
 
-func (sc *shardedCache) DeleteExpired() {
+func (sc *shardedCache[T]) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
 	}
@@ -110,26 +107,26 @@ func (sc *shardedCache) DeleteExpired() {
 // fields of the items should be checked. Note that explicit synchronization
 // is needed to use a cache and its corresponding Items() return values at
 // the same time, as the maps are shared.
-func (sc *shardedCache) Items() []map[string]Item {
-	res := make([]map[string]Item, len(sc.cs))
+func (sc *shardedCache[T]) Items() []map[string]Item[T] {
+	res := make([]map[string]Item[T], len(sc.cs))
 	for i, v := range sc.cs {
 		res[i] = v.Items()
 	}
 	return res
 }
 
-func (sc *shardedCache) Flush() {
+func (sc *shardedCache[T]) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
 	}
 }
 
-type shardedJanitor struct {
+type shardedJanitor[T comparable] struct {
 	Interval time.Duration
 	stop     chan bool
 }
 
-func (j *shardedJanitor) Run(sc *shardedCache) {
+func (j *shardedJanitor[T]) Run(sc *shardedCache[T]) {
 	j.stop = make(chan bool)
 	tick := time.Tick(j.Interval)
 	for {
@@ -142,19 +139,19 @@ func (j *shardedJanitor) Run(sc *shardedCache) {
 	}
 }
 
-func stopShardedJanitor(sc *unexportedShardedCache) {
+func stopShardedJanitor[T comparable](sc *unexportedShardedCache[T]) {
 	sc.janitor.stop <- true
 }
 
-func runShardedJanitor(sc *shardedCache, ci time.Duration) {
-	j := &shardedJanitor{
+func runShardedJanitor[T comparable](sc *shardedCache[T], ci time.Duration) {
+	j := &shardedJanitor[T]{
 		Interval: ci,
 	}
 	sc.janitor = j
 	go j.Run(sc)
 }
 
-func newShardedCache(n int, de time.Duration) *shardedCache {
+func newShardedCache[T comparable](n int, de time.Duration) *shardedCache[T] {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
@@ -164,31 +161,30 @@ func newShardedCache(n int, de time.Duration) *shardedCache {
 	} else {
 		seed = uint32(rnd.Uint64())
 	}
-	sc := &shardedCache{
+	sc := &shardedCache[T]{
 		seed: seed,
 		m:    uint32(n),
-		cs:   make([]*cache, n),
+		cs:   make([]*cache[T], n),
 	}
 	for i := 0; i < n; i++ {
-		c := &cache{
+		c := &cache[T]{
 			defaultExpiration: de,
-			items:             map[string]Item{},
+			items:             map[string]Item[T]{},
 		}
 		sc.cs[i] = c
 	}
 	return sc
 }
 
-func unexportedNewSharded(defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache {
+func unexportedNewSharded[T comparable](defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache[T] {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
 	}
-	sc := newShardedCache(shards, defaultExpiration)
-	SC := &unexportedShardedCache{sc}
+	sc := newShardedCache[T](shards, defaultExpiration)
+	SC := &unexportedShardedCache[T]{sc}
 	if cleanupInterval > 0 {
 		runShardedJanitor(sc, cleanupInterval)
-		runtime.SetFinalizer(SC, stopShardedJanitor)
+		runtime.SetFinalizer(SC, stopShardedJanitor[T])
 	}
 	return SC
 }
-*/
