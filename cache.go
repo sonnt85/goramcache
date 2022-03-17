@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type Item [T comparable] struct {
+type Item[T any] struct {
 	Object     T
 	Expiration int64
 }
@@ -32,14 +32,12 @@ const (
 	DefaultExpiration time.Duration = 0
 )
 
-type Cache [T comparable] struct {
+type Cache[T any] struct {
 	*cache[T]
 	// If this is confusing, see the comment at the bottom of New()
 }
 
-
-
-type cache [T comparable] struct {
+type cache[T any] struct {
 	defaultExpiration time.Duration
 	items             map[string]Item[T]
 	mu                sync.RWMutex
@@ -192,7 +190,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 
 	// TODO: Consider adding a constraint to avoid the type switch and provide
 	// compile-time safety
-	
+
 	c.mu.Lock()
 	var zero T
 	v, found := c.items[k]
@@ -203,7 +201,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 	// Generics does not (currently?) support type switching
 	// To workaround, we convert the value into a interface{}, and switching on that
 	var untypedValue interface{}
-	
+
 	untypedValue = v.Object
 	switch untypedValue.(type) {
 	case int:
@@ -213,7 +211,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 	case int16:
 		untypedValue = untypedValue.(int16) + int16(n)
 	case int32:
-		untypedValue= untypedValue.(int32) + int32(n)
+		untypedValue = untypedValue.(int32) + int32(n)
 	case int64:
 		untypedValue = untypedValue.(int64) + n
 	case uint:
@@ -260,7 +258,7 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 	// Generics does not (currently?) support type switching
 	// To workaround, we convert the value into a interface{}, and switching on that
 	var untypedValue interface{}
-	
+
 	untypedValue = v.Object
 	switch untypedValue.(type) {
 	case int:
@@ -270,7 +268,7 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 	case int16:
 		untypedValue = untypedValue.(int16) - int16(n)
 	case int32:
-		untypedValue= untypedValue.(int32) - int32(n)
+		untypedValue = untypedValue.(int32) - int32(n)
 	case int64:
 		untypedValue = untypedValue.(int64) - n
 	case uint:
@@ -299,7 +297,6 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 	return zero, nil
 }
 
-
 // Delete an item from the cache. Does nothing if the key is not in the cache.
 func (c *cache[T]) Delete(k string) {
 	c.mu.Lock()
@@ -322,7 +319,7 @@ func (c *cache[T]) delete(k string) (T, bool) {
 	return zero, false
 }
 
-type keyAndValue[T comparable] struct {
+type keyAndValue[T any] struct {
 	key   string
 	value T
 }
@@ -355,7 +352,6 @@ func (c *cache[T]) OnEvicted(f func(string, T)) {
 	c.onEvicted = f
 	c.mu.Unlock()
 }
-
 
 // Write the cache's items (using Gob) to an io.Writer.
 //
@@ -435,7 +431,6 @@ func (c *cache[T]) LoadFile(fname string) error {
 	return fp.Close()
 }
 
-
 // Copies all unexpired items in the cache into a new map and returns it.
 func (c *cache[T]) Items() map[string]Item[T] {
 	c.mu.RLock()
@@ -475,7 +470,7 @@ type janitor struct {
 	stop     chan bool
 }
 
-func runJanitor[T comparable](j *janitor, c *cache[T]) {
+func runJanitor[T any](j *janitor, c *cache[T]) {
 	ticker := time.NewTicker(j.Interval)
 	for {
 		select {
@@ -488,11 +483,11 @@ func runJanitor[T comparable](j *janitor, c *cache[T]) {
 	}
 }
 
-func stopJanitor[T comparable](c *Cache[T]) {
+func stopJanitor[T any](c *Cache[T]) {
 	c.janitor.stop <- true
 }
 
-func startJanitor[T comparable](c *cache[T], ci time.Duration) {
+func startJanitor[T any](c *cache[T], ci time.Duration) {
 	j := &janitor{
 		Interval: ci,
 		stop:     make(chan bool),
@@ -501,7 +496,7 @@ func startJanitor[T comparable](c *cache[T], ci time.Duration) {
 	go runJanitor(j, c)
 }
 
-func newCache[T comparable](de time.Duration, m map[string]Item[T]) *cache[T] {
+func newCache[T any](de time.Duration, m map[string]Item[T]) *cache[T] {
 	if de == 0 {
 		de = -1
 	}
@@ -512,7 +507,7 @@ func newCache[T comparable](de time.Duration, m map[string]Item[T]) *cache[T] {
 	return c
 }
 
-func newCacheWithJanitor[T comparable](de time.Duration, ci time.Duration, m map[string]Item[T]) *Cache[T] {
+func newCacheWithJanitor[T any](de time.Duration, ci time.Duration, m map[string]Item[T]) *Cache[T] {
 	c := newCache(de, m)
 	// This trick ensures that the janitor goroutine (which--granted it
 	// was enabled--is running DeleteExpired on c forever) does not keep
@@ -527,13 +522,12 @@ func newCacheWithJanitor[T comparable](de time.Duration, ci time.Duration, m map
 	return C
 }
 
-
 // Return a new cache with a given default expiration duration and cleanup
 // interval. If the expiration duration is less than one (or NoExpiration),
 // the items in the cache never expire (by default), and must be deleted
 // manually. If the cleanup interval is less than one, expired items are not
 // deleted from the cache before calling c.DeleteExpired().
-func New[T comparable](defaultExpiration, cleanupInterval time.Duration) *Cache[T] {
+func New[T any](defaultExpiration, cleanupInterval time.Duration) *Cache[T] {
 	items := make(map[string]Item[T])
 	return newCacheWithJanitor[T](defaultExpiration, cleanupInterval, items)
 }
@@ -559,6 +553,6 @@ func New[T comparable](defaultExpiration, cleanupInterval time.Duration) *Cache[
 // gob.Register() the individual types stored in the cache before encoding a
 // map retrieved with c.Items(), and to register those same types before
 // decoding a blob containing an items map.
-func NewFrom[T comparable](defaultExpiration, cleanupInterval time.Duration, items map[string]Item[T]) *Cache[T] {
+func NewFrom[T any](defaultExpiration, cleanupInterval time.Duration, items map[string]Item[T]) *Cache[T] {
 	return newCacheWithJanitor(defaultExpiration, cleanupInterval, items)
 }

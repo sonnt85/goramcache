@@ -1,6 +1,5 @@
 package goramcache
 
-/*
 import (
 	"strconv"
 	"sync"
@@ -28,7 +27,7 @@ var shardedKeys = []string{
 }
 
 func TestShardedCache(t *testing.T) {
-	tc := unexportedNewSharded(DefaultExpiration, 0, 13)
+	tc := unexportedNewSharded[interface{}](DefaultExpiration, 0, 13)
 	for _, v := range shardedKeys {
 		tc.Set(v, "value", DefaultExpiration)
 	}
@@ -44,7 +43,7 @@ func BenchmarkShardedCacheGetNotExpiring(b *testing.B) {
 
 func benchmarkShardedCacheGet(b *testing.B, exp time.Duration) {
 	b.StopTimer()
-	tc := unexportedNewSharded(exp, 0, 10)
+	tc := unexportedNewSharded[interface{}](exp, 0, 10)
 	tc.Set("foobarba", "zquux", DefaultExpiration)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -63,7 +62,7 @@ func BenchmarkShardedCacheGetManyConcurrentNotExpiring(b *testing.B) {
 func benchmarkShardedCacheGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StopTimer()
 	n := 10000
-	tsc := unexportedNewSharded(exp, 0, 20)
+	tsc := unexportedNewSharded[interface{}](exp, 0, 20)
 	keys := make([]string, n)
 	for i := 0; i < n; i++ {
 		k := "foo" + strconv.Itoa(i)
@@ -84,4 +83,3 @@ func benchmarkShardedCacheGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StartTimer()
 	wg.Wait()
 }
-*/

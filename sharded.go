@@ -19,11 +19,11 @@ import (
 //
 // See cache_test.go for a few benchmarks.
 
-type unexportedShardedCache[T comparable] struct {
+type unexportedShardedCache[T any] struct {
 	*shardedCache[T]
 }
 
-type shardedCache[T comparable] struct {
+type shardedCache[T any] struct {
 	seed    uint32
 	m       uint32
 	cs      []*cache[T]
@@ -121,7 +121,7 @@ func (sc *shardedCache[T]) Flush() {
 	}
 }
 
-type shardedJanitor[T comparable] struct {
+type shardedJanitor[T any] struct {
 	Interval time.Duration
 	stop     chan bool
 }
@@ -139,11 +139,11 @@ func (j *shardedJanitor[T]) Run(sc *shardedCache[T]) {
 	}
 }
 
-func stopShardedJanitor[T comparable](sc *unexportedShardedCache[T]) {
+func stopShardedJanitor[T any](sc *unexportedShardedCache[T]) {
 	sc.janitor.stop <- true
 }
 
-func runShardedJanitor[T comparable](sc *shardedCache[T], ci time.Duration) {
+func runShardedJanitor[T any](sc *shardedCache[T], ci time.Duration) {
 	j := &shardedJanitor[T]{
 		Interval: ci,
 	}
@@ -151,7 +151,7 @@ func runShardedJanitor[T comparable](sc *shardedCache[T], ci time.Duration) {
 	go j.Run(sc)
 }
 
-func newShardedCache[T comparable](n int, de time.Duration) *shardedCache[T] {
+func newShardedCache[T any](n int, de time.Duration) *shardedCache[T] {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
@@ -176,7 +176,7 @@ func newShardedCache[T comparable](n int, de time.Duration) *shardedCache[T] {
 	return sc
 }
 
-func unexportedNewSharded[T comparable](defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache[T] {
+func unexportedNewSharded[T any](defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache[T] {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
 	}
