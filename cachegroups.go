@@ -80,6 +80,9 @@ func (sc *cacheGroups[T]) Replace(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Replace(k, x, d)
 }
 
+func (sc *cacheGroups[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error {
+	return sc.bucket(k).Edit(k, x, apFunc)
+}
 func (sc *cacheGroups[T]) Get(k string) (T, bool) {
 	return sc.bucket(k).Get(k)
 }

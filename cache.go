@@ -104,7 +104,7 @@ func (c *cache[T]) Add(k string, x T, d time.Duration) error {
 	return nil
 }
 
-func (c *cache[T]) Append(k string, x T) error { //TODO update to run
+func (c *cache[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error { //TODO update to run
 	c.mu.Lock()
 	v, found := c.items[k]
 	if !found || v.Expired() {
@@ -119,13 +119,18 @@ func (c *cache[T]) Append(k string, x T) error { //TODO update to run
 		// }
 		// nv := append(v, rv)
 		// v.Object = append(v.Object, x...)
-		c.items[k] = v
+		edited, err := apFunc(v.Object, x)
+		if err == nil {
+			v.Object = edited
+			c.items[k] = v
+			return nil
+		}
+		c.mu.Unlock()
+		return err
 	default:
 		c.mu.Unlock()
 		return fmt.Errorf("The value for %s is not an []string", k)
 	}
-	c.mu.Unlock()
-	return nil
 }
 
 // Set a new value for the cache key only if it already exists, and the existing
