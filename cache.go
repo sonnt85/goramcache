@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
+	"regexp"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 )
@@ -101,6 +104,30 @@ func (c *cache[T]) Add(k string, x T, d time.Duration) error {
 	return nil
 }
 
+func (c *cache[T]) Append(k string, x T) error { //TODO update to run
+	c.mu.Lock()
+	v, found := c.items[k]
+	if !found || v.Expired() {
+		c.mu.Unlock()
+		return fmt.Errorf("Item %q not found", k)
+	}
+	switch reflect.TypeOf(v.Object).Kind() {
+	case reflect.Slice:
+		// rv := reflect.ValueOf(v.Object)
+		// for i := 0; i < rv.Len(); i++ {
+		// 	v.Object = append(v.Object, rv.Index(i).Interface())
+		// }
+		// nv := append(v, rv)
+		// v.Object = append(v.Object, x...)
+		c.items[k] = v
+	default:
+		c.mu.Unlock()
+		return fmt.Errorf("The value for %s is not an []string", k)
+	}
+	c.mu.Unlock()
+	return nil
+}
+
 // Set a new value for the cache key only if it already exists, and the existing
 // item hasn't expired. Returns an error otherwise.
 func (c *cache[T]) Replace(k string, x T, d time.Duration) error {
@@ -134,6 +161,85 @@ func (c *cache[T]) Get(k string) (T, bool) {
 	}
 	c.mu.RUnlock()
 	return item.Object, true
+}
+
+// GetWithExpirationUpdate returns item and updates its cache expiration time
+// It returns the item or nil, the expiration time if one is set (if the item
+// never expires a zero value for time.Time is returned), and a bool indicating
+// whether the key was found.
+func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
+	c.mu.RLock()
+	var zero T
+	item, found := c.items[k]
+	if !found {
+		c.mu.RUnlock()
+		return zero, false
+	}
+	if item.Expiration > 0 {
+		if time.Now().UnixNano() > item.Expiration {
+			c.mu.RUnlock()
+			return zero, false
+		}
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	if d == DefaultExpiration {
+		d = c.defaultExpiration
+	}
+	if d > 0 {
+		item.Expiration = time.Now().Add(d).UnixNano()
+	}
+	c.items[k] = item
+	c.mu.Unlock()
+
+	return item.Object, true
+}
+
+// Keys returns a sorted slice of all the keys in the cache.
+func (c *cache[T]) Keys() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	keys := make([]string, len(c.items))
+	var i int
+	for k := range c.items {
+		keys[i] = k
+		i++
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+//GetMultipleItems returns an array of items corresponding to the input array
+func (c *cache[T]) GetMultipleItems(keys []string) []T {
+	length := len(keys)
+	var items = make([]T, length)
+	for i := 0; i < length; i++ {
+		item, _ := c.Get(keys[i])
+		items[i] = item
+	}
+	return items
+}
+
+func (c *cache[T]) IncrementExpiration(k string, d time.Duration) error {
+	c.mu.Lock()
+	v, found := c.items[k]
+	if !found || v.Expired() {
+		c.mu.Unlock()
+		return fmt.Errorf("key %s not found.", k)
+	}
+
+	var e int64
+	if d == DefaultExpiration {
+		d = c.defaultExpiration
+	}
+	if d > 0 {
+		e = time.Now().Add(d).UnixNano()
+	}
+	v.Expiration = e
+
+	c.mu.Unlock()
+	return nil
 }
 
 // GetWithExpiration returns an item and its expiration time from the cache.
@@ -307,6 +413,15 @@ func (c *cache[T]) Delete(k string) {
 	}
 }
 
+func (c *cache[T]) DeleteRegex(rule string) {
+	re, _ := regexp.Compile(rule)
+	for k := range c.items {
+		if re.MatchString(k) {
+			c.Delete(k)
+		}
+	}
+}
+
 func (c *cache[T]) delete(k string) (T, bool) {
 	var zero T
 	if c.onEvicted != nil {
@@ -429,6 +544,37 @@ func (c *cache[T]) LoadFile(fname string) error {
 		return err
 	}
 	return fp.Close()
+}
+
+// Iterate every item by item handle items from cache,and if the handle returns to false,
+// it will be interrupted and return false.
+func (c *cache[T]) Iterate(f func(key string, item Item[T]) bool) bool {
+	now := time.Now().UnixNano()
+	c.mu.RLock()
+	keys := make([]string, len(c.items))
+	i := 0
+	for k, v := range c.items {
+		// "Inlining" of Expired
+		if v.Expiration > 0 && now > v.Expiration {
+			continue
+		}
+		keys[i] = k
+		i++
+	}
+	c.mu.RUnlock()
+	keys = keys[:i]
+	for _, key := range keys {
+		c.mu.RLock()
+		item, ok := c.items[key]
+		c.mu.RUnlock()
+		if !ok {
+			continue
+		}
+		if !f(key, item) {
+			return false
+		}
+	}
+	return true
 }
 
 // Copies all unexpired items in the cache into a new map and returns it.

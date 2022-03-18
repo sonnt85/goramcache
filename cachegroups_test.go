@@ -26,24 +26,24 @@ var shardedKeys = []string{
 	"foobarbazquux",
 }
 
-func TestShardedCache(t *testing.T) {
-	tc := NewSharded[string](DefaultExpiration, 0, 13)
+func TestCacheGroups(t *testing.T) {
+	tc := NewCacheGroups[string](DefaultExpiration, 0, 13)
 	for _, v := range shardedKeys {
 		tc.Set(v, "value", DefaultExpiration)
 	}
 }
 
-func BenchmarkShardedCacheGetExpiring(b *testing.B) {
-	benchmarkShardedCacheGet(b, 5*time.Minute)
+func BenchmarkCacheGroupsGetExpiring(b *testing.B) {
+	benchmarkCacheGroupsGet(b, 5*time.Minute)
 }
 
-func BenchmarkShardedCacheGetNotExpiring(b *testing.B) {
-	benchmarkShardedCacheGet(b, NoExpiration)
+func BenchmarkCacheGroupsGetNotExpiring(b *testing.B) {
+	benchmarkCacheGroupsGet(b, NoExpiration)
 }
 
-func benchmarkShardedCacheGet(b *testing.B, exp time.Duration) {
+func benchmarkCacheGroupsGet(b *testing.B, exp time.Duration) {
 	b.StopTimer()
-	tc := NewSharded[interface{}](exp, 0, 10)
+	tc := NewCacheGroups[interface{}](exp, 0, 10)
 	tc.Set("foobarba", "zquux", DefaultExpiration)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -51,18 +51,18 @@ func benchmarkShardedCacheGet(b *testing.B, exp time.Duration) {
 	}
 }
 
-func BenchmarkShardedCacheGetManyConcurrentExpiring(b *testing.B) {
-	benchmarkShardedCacheGetManyConcurrent(b, 5*time.Minute)
+func BenchmarkCacheGroupsGetManyConcurrentExpiring(b *testing.B) {
+	benchmarkCacheGroupsGetManyConcurrent(b, 5*time.Minute)
 }
 
-func BenchmarkShardedCacheGetManyConcurrentNotExpiring(b *testing.B) {
-	benchmarkShardedCacheGetManyConcurrent(b, NoExpiration)
+func BenchmarkCacheGroupsGetManyConcurrentNotExpiring(b *testing.B) {
+	benchmarkCacheGroupsGetManyConcurrent(b, NoExpiration)
 }
 
-func benchmarkShardedCacheGetManyConcurrent(b *testing.B, exp time.Duration) {
+func benchmarkCacheGroupsGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StopTimer()
 	n := 10000
-	tsc := NewSharded[interface{}](exp, 0, 20)
+	tsc := NewCacheGroups[interface{}](exp, 0, 20)
 	keys := make([]string, n)
 	for i := 0; i < n; i++ {
 		k := "foo" + strconv.Itoa(i)

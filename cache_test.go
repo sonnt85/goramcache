@@ -21,6 +21,23 @@ type TestStruct struct {
 	Children []*TestStruct
 }
 
+func TestCacheKeys(t *testing.T) {
+	tc := New[int](DefaultExpiration, 0)
+
+	tc.Set("a", 1, DefaultExpiration)
+	tc.Set("b", 2, DefaultExpiration)
+	tc.Set("c", 3, DefaultExpiration)
+
+	keys := tc.Keys()
+
+	if len(keys) != 3 {
+		t.Error("invalid number of cache keys received")
+	}
+
+	if keys[0] != "a" || keys[1] != "b" || keys[2] != "c" {
+		t.Error("invalid cache keys received")
+	}
+}
 func TestCache(t *testing.T) {
 
 	tcInt := New[int](DefaultExpiration, 0)
@@ -1780,5 +1797,30 @@ func TestGetWithExpiration(t *testing.T) {
 	}
 	if expiration.UnixNano() < time.Now().UnixNano() {
 		t.Error("expiration for e is in the past")
+	}
+}
+
+func TestGetWithExpirationUpdate(t *testing.T) {
+	var found bool
+
+	tc := New[interface{}](50*time.Millisecond, 1*time.Millisecond)
+	tc.Set("a", 1, DefaultExpiration)
+
+	<-time.After(25 * time.Millisecond)
+	_, found = tc.GetWithExpirationUpdate("a", DefaultExpiration)
+	if !found {
+		t.Error("item `a` not expired yet")
+	}
+
+	<-time.After(25 * time.Millisecond)
+	_, found = tc.Get("a")
+	if !found {
+		t.Error("item `a` not expired yet")
+	}
+
+	<-time.After(30 * time.Millisecond)
+	_, found = tc.Get("a")
+	if found {
+		t.Error("Found `a` when it should have been automatically deleted")
 	}
 }

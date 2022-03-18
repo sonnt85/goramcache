@@ -2,6 +2,8 @@ package goramcache
 
 import (
 	"crypto/rand"
+	"encoding/gob"
+	"io"
 	"math"
 	"math/big"
 	insecurerand "math/rand"
@@ -19,11 +21,11 @@ import (
 //
 // See cache_test.go for a few benchmarks.
 
-type ShardedCache[T any] struct {
-	*shardedCache[T]
+type CacheGroups[T any] struct {
+	*cacheGroups[T]
 }
 
-type shardedCache[T any] struct {
+type cacheGroups[T any] struct {
 	seed    uint32
 	m       uint32
 	cs      []*cache[T]
@@ -62,44 +64,118 @@ func djb33(seed uint32, k string) uint32 {
 	return d ^ (d >> 16)
 }
 
-func (sc *shardedCache[T]) bucket(k string) *cache[T] {
+func (sc *cacheGroups[T]) bucket(k string) *cache[T] {
 	return sc.cs[djb33(sc.seed, k)%sc.m]
 }
 
-func (sc *shardedCache[T]) Set(k string, x T, d time.Duration) {
+func (sc *cacheGroups[T]) Set(k string, x T, d time.Duration) {
 	sc.bucket(k).Set(k, x, d)
 }
 
-func (sc *shardedCache[T]) Add(k string, x T, d time.Duration) error {
+func (sc *cacheGroups[T]) Add(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Add(k, x, d)
 }
 
-func (sc *shardedCache[T]) Replace(k string, x T, d time.Duration) error {
+func (sc *cacheGroups[T]) Replace(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Replace(k, x, d)
 }
 
-func (sc *shardedCache[T]) Get(k string) (interface{}, bool) {
+func (sc *cacheGroups[T]) Get(k string) (T, bool) {
 	return sc.bucket(k).Get(k)
 }
 
-func (sc *shardedCache[T]) Increment(k string, n int64) error {
+func (sc *cacheGroups[T]) Keys() (keys []string) {
+	keys = make([]string, 0)
+	for i, _ := range sc.cs {
+		keys = append(keys, sc.cs[i].Keys()...)
+	}
+	return keys
+}
+func (sc *cacheGroups[T]) GetWithExpirationGet(k string) (T, time.Time, bool) {
+	return sc.bucket(k).GetWithExpiration(k)
+}
+
+func (sc *cacheGroups[T]) Increment(k string, n int64) error {
 	_, err := sc.bucket(k).Increment(k, n)
 	return err
 }
 
-func (sc *shardedCache[T]) Decrement(k string, n int64) error {
+func (sc *cacheGroups[T]) Decrement(k string, n int64) error {
 	_, err := sc.bucket(k).Decrement(k, n)
 	return err
 }
 
-func (sc *shardedCache[T]) Delete(k string) {
+func (sc *cacheGroups[T]) Delete(k string) {
 	sc.bucket(k).Delete(k)
 }
 
-func (sc *shardedCache[T]) DeleteExpired() {
+func (sc *cacheGroups[T]) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
 	}
+}
+
+func (sc *cacheGroups[T]) Load(r io.Reader) error {
+	dec := gob.NewDecoder(r)
+	items := map[string]Item[T]{}
+	err := dec.Decode(&items)
+	if err == nil {
+		for k, v := range items {
+			sc.bucket(k).mu.Lock()
+			ov, found := sc.bucket(k).items[k]
+			if !found || ov.Expired() {
+				sc.bucket(k).items[k] = v
+			}
+			sc.bucket(k).mu.Unlock()
+		}
+	}
+	return err
+}
+
+// Load and add cache items from the given filename, excluding any items with
+// keys that already exist in the current cache.
+func (sc *cacheGroups[T]) LoadFile(fname string) error {
+	fp, err := os.Open(fname)
+	if err != nil {
+		return err
+	}
+	err = sc.Load(fp)
+	if err != nil {
+		fp.Close()
+		return err
+	}
+	return fp.Close()
+}
+
+func (sc *cacheGroups[T]) Save(w io.Writer) (err error) {
+	c := New[T](NoExpiration, NoExpiration)
+	for i, _ := range sc.cs {
+		sc.cs[i].mu.RLock()
+		defer sc.cs[i].mu.RUnlock()
+		now := time.Now().UnixNano()
+		for k, v := range sc.cs[i].items {
+			if v.Expiration > 0 {
+				if now > v.Expiration {
+					continue
+				}
+			}
+			c.items[k] = v
+		}
+	}
+	return c.Save(w)
+}
+
+func (sc *cacheGroups[T]) SaveFile(fname string) error {
+	fp, err := os.Create(fname)
+	if err != nil {
+		return err
+	}
+	err = sc.Save(fp)
+	if err != nil {
+		fp.Close()
+		return err
+	}
+	return fp.Close()
 }
 
 // Returns the items in the cache. This may include items that have expired,
@@ -107,7 +183,7 @@ func (sc *shardedCache[T]) DeleteExpired() {
 // fields of the items should be checked. Note that explicit synchronization
 // is needed to use a cache and its corresponding Items() return values at
 // the same time, as the maps are shared.
-func (sc *shardedCache[T]) Items() []map[string]Item[T] {
+func (sc *cacheGroups[T]) Items() []map[string]Item[T] {
 	res := make([]map[string]Item[T], len(sc.cs))
 	for i, v := range sc.cs {
 		res[i] = v.Items()
@@ -115,7 +191,7 @@ func (sc *shardedCache[T]) Items() []map[string]Item[T] {
 	return res
 }
 
-func (sc *shardedCache[T]) Flush() {
+func (sc *cacheGroups[T]) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
 	}
@@ -126,7 +202,7 @@ type shardedJanitor[T any] struct {
 	stop     chan bool
 }
 
-func (j *shardedJanitor[T]) Run(sc *shardedCache[T]) {
+func (j *shardedJanitor[T]) Run(sc *cacheGroups[T]) {
 	j.stop = make(chan bool)
 	tick := time.Tick(j.Interval)
 	for {
@@ -139,11 +215,11 @@ func (j *shardedJanitor[T]) Run(sc *shardedCache[T]) {
 	}
 }
 
-func stopShardedJanitor[T any](sc *ShardedCache[T]) {
+func stopShardedJanitor[T any](sc *CacheGroups[T]) {
 	sc.janitor.stop <- true
 }
 
-func runShardedJanitor[T any](sc *shardedCache[T], ci time.Duration) {
+func runShardedJanitor[T any](sc *cacheGroups[T], ci time.Duration) {
 	j := &shardedJanitor[T]{
 		Interval: ci,
 	}
@@ -151,17 +227,17 @@ func runShardedJanitor[T any](sc *shardedCache[T], ci time.Duration) {
 	go j.Run(sc)
 }
 
-func newShardedCache[T any](n int, de time.Duration) *shardedCache[T] {
+func newCacheGroups[T any](n int, de time.Duration) *cacheGroups[T] {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
 	if err != nil {
-		os.Stderr.Write([]byte("WARNING: go-cache's newShardedCache failed to read from the system CSPRNG (/dev/urandom or equivalent.) Your system's security may be compromised. Continuing with an insecure seed.\n"))
+		os.Stderr.Write([]byte("WARNING: go-cache's newCacheGroups failed to read from the system CSPRNG (/dev/urandom or equivalent.) Your system's security may be compromised. Continuing with an insecure seed.\n"))
 		seed = insecurerand.Uint32()
 	} else {
 		seed = uint32(rnd.Uint64())
 	}
-	sc := &shardedCache[T]{
+	sc := &cacheGroups[T]{
 		seed: seed,
 		m:    uint32(n),
 		cs:   make([]*cache[T], n),
@@ -176,12 +252,12 @@ func newShardedCache[T any](n int, de time.Duration) *shardedCache[T] {
 	return sc
 }
 
-func NewSharded[T any](defaultExpiration, cleanupInterval time.Duration, shards int) *ShardedCache[T] {
+func NewCacheGroups[T any](defaultExpiration, cleanupInterval time.Duration, numgroups int) *CacheGroups[T] {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
 	}
-	sc := newShardedCache[T](shards, defaultExpiration)
-	SC := &ShardedCache[T]{sc}
+	sc := newCacheGroups[T](numgroups, defaultExpiration)
+	SC := &CacheGroups[T]{sc}
 	if cleanupInterval > 0 {
 		runShardedJanitor(sc, cleanupInterval)
 		runtime.SetFinalizer(SC, stopShardedJanitor[T])
