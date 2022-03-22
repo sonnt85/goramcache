@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -111,26 +110,13 @@ func (c *cache[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T,
 		c.mu.Unlock()
 		return fmt.Errorf("Item %q not found", k)
 	}
-	switch reflect.TypeOf(v.Object).Kind() {
-	case reflect.Slice:
-		// rv := reflect.ValueOf(v.Object)
-		// for i := 0; i < rv.Len(); i++ {
-		// 	v.Object = append(v.Object, rv.Index(i).Interface())
-		// }
-		// nv := append(v, rv)
-		// v.Object = append(v.Object, x...)
-		edited, err := apFunc(v.Object, x)
-		if err == nil {
-			v.Object = edited
-			c.items[k] = v
-			return nil
-		}
-		c.mu.Unlock()
-		return err
-	default:
-		c.mu.Unlock()
-		return fmt.Errorf("The value for %s is not an []string", k)
+	edited, err := apFunc(v.Object, x)
+	if err == nil {
+		v.Object = edited
+		c.items[k] = v
 	}
+	c.mu.Unlock()
+	return err
 }
 
 // Set a new value for the cache key only if it already exists, and the existing
@@ -203,16 +189,32 @@ func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) 
 
 // Keys returns a sorted slice of all the keys in the cache.
 func (c *cache[T]) Keys() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	keys := make([]string, len(c.items))
 	var i int
+	c.mu.RLock()
 	for k := range c.items {
 		keys[i] = k
 		i++
 	}
+	c.mu.RUnlock()
 	sort.Strings(keys)
 	return keys
+}
+
+func (c *cache[T]) Values() []T {
+	values := make([]T, len(c.items))
+	var i int
+	now := time.Now().UnixNano()
+	c.mu.RLock()
+	for _, v := range c.items {
+		if v.Expiration > 0 && now > v.Expiration {
+			continue
+		}
+		values[i] = v.Object
+		i++
+	}
+	c.mu.RUnlock()
+	return values
 }
 
 //GetMultipleItems returns an array of items corresponding to the input array
@@ -553,7 +555,7 @@ func (c *cache[T]) LoadFile(fname string) error {
 
 // Iterate every item by item handle items from cache,and if the handle returns to false,
 // it will be interrupted and return false.
-func (c *cache[T]) Iterate(f func(key string, item Item[T]) bool) bool {
+func (c *cache[T]) Iterate(f func(key string, item T) bool) bool {
 	now := time.Now().UnixNano()
 	c.mu.RLock()
 	keys := make([]string, len(c.items))
@@ -575,7 +577,7 @@ func (c *cache[T]) Iterate(f func(key string, item Item[T]) bool) bool {
 		if !ok {
 			continue
 		}
-		if !f(key, item) {
+		if !f(key, item.Object) {
 			return false
 		}
 	}
