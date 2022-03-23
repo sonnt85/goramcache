@@ -72,6 +72,10 @@ func (sc *cacheGroups[T]) Set(k string, x T, d time.Duration) {
 	sc.bucket(k).Set(k, x, d)
 }
 
+func (sc *cacheGroups[T]) SetDefault(k string, x T) {
+	sc.bucket(k).SetDefault(k, x)
+}
+
 func (sc *cacheGroups[T]) Add(k string, x T, d time.Duration) error {
 	return sc.bucket(k).Add(k, x, d)
 }
@@ -96,6 +100,14 @@ func (sc *cacheGroups[T]) Keys() (keys []string) {
 }
 func (sc *cacheGroups[T]) GetWithExpirationGet(k string) (T, time.Time, bool) {
 	return sc.bucket(k).GetWithExpiration(k)
+}
+
+func (sc *cacheGroups[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
+	return sc.bucket(k).GetWithExpirationUpdate(k, d)
+}
+
+func (sc *cacheGroups[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
+	return sc.GetWithDefaultExpirationUpdate(k)
 }
 
 func (sc *cacheGroups[T]) Increment(k string, n int64) error {
