@@ -154,6 +154,28 @@ func (c *cache[T]) Get(k string) (T, bool) {
 	return item.Object, true
 }
 
+func (c *cache[T]) GetThenDelete(k string) (T, bool) {
+	t, ok := c.Get(k)
+	if ok {
+		c.Delete(k)
+	}
+	return t, ok
+}
+
+func (c *cache[T]) GetOldOrCreateNew(k string, initval T) (T, bool) {
+	if v, ok := c.Get(k); ok {
+		return v, false
+	} else {
+		// var zero T
+		// value := reflect.ValueOf(zero)
+		// if value.Kind() == reflect.Pointer {
+
+		// }
+		c.SetDefault(k, initval)
+		return initval, true
+	}
+}
+
 // GetWithExpirationUpdate returns item and updates its cache expiration time
 // It returns the item or nil, the expiration time if one is set (if the item
 // never expires a zero value for time.Time is returned), and a bool indicating
@@ -185,6 +207,10 @@ func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) 
 	c.mu.Unlock()
 
 	return item.Object, true
+}
+
+func (c *cache[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
+	return c.GetWithExpirationUpdate(k, DefaultExpiration)
 }
 
 // Keys returns a sorted slice of all the keys in the cache.
