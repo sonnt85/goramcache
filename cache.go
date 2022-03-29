@@ -136,8 +136,8 @@ func (c *cache[T]) Replace(k string, x T, d time.Duration) error {
 // Get an item from the cache. Returns the item or nil, and a bool indicating
 // whether the key was found.
 func (c *cache[T]) Get(k string) (T, bool) {
-	c.mu.RLock()
 	var zero T
+	c.mu.RLock()
 	// "Inlining" of get and Expired
 	item, found := c.items[k]
 	if !found {
@@ -181,8 +181,8 @@ func (c *cache[T]) GetOldOrCreateNew(k string, initval T) (T, bool) {
 // never expires a zero value for time.Time is returned), and a bool indicating
 // whether the key was found.
 func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
-	c.mu.RLock()
 	var zero T
+	c.mu.RLock()
 	item, found := c.items[k]
 	if !found {
 		c.mu.RUnlock()
@@ -215,9 +215,9 @@ func (c *cache[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
 
 // Keys returns a sorted slice of all the keys in the cache.
 func (c *cache[T]) Keys() []string {
-	keys := make([]string, len(c.items))
 	var i int
 	c.mu.RLock()
+	keys := make([]string, len(c.items))
 	for k := range c.items {
 		keys[i] = k
 		i++
@@ -228,10 +228,10 @@ func (c *cache[T]) Keys() []string {
 }
 
 func (c *cache[T]) Values() []T {
-	values := make([]T, len(c.items))
 	var i int
 	now := time.Now().UnixNano()
 	c.mu.RLock()
+	values := make([]T, len(c.items))
 	for _, v := range c.items {
 		if v.Expiration > 0 && now > v.Expiration {
 			continue
@@ -280,8 +280,8 @@ func (c *cache[T]) IncrementExpiration(k string, d time.Duration) error {
 // never expires a zero value for time.Time is returned), and a bool indicating
 // whether the key was found.
 func (c *cache[T]) GetWithExpiration(k string) (T, time.Time, bool) {
-	c.mu.RLock()
 	var zero T
+	c.mu.RLock()
 	// "Inlining" of get and Expired
 	item, found := c.items[k]
 	if !found {
@@ -329,9 +329,8 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 
 	// TODO: Consider adding a constraint to avoid the type switch and provide
 	// compile-time safety
-
-	c.mu.Lock()
 	var zero T
+	c.mu.Lock()
 	v, found := c.items[k]
 	if !found || v.Expired() {
 		c.mu.Unlock()

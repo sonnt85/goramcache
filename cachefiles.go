@@ -3,7 +3,6 @@ package goramcache
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"time"
 
@@ -25,7 +24,11 @@ func NewCacheFiles(rootDir string, defaultExpiration, cleanupInterval time.Durat
 			os.Remove(v)
 		}
 	})
-	if nil != os.MkdirAll(rootDir, 0755) {
+	os.MkdirAll(rootDir, 0755)
+	// if nil != os.MkdirAll(rootDir, 0755) {
+	// 	return nil
+	// }
+	if !sutils.PathIsDir(rootDir) {
 		return nil
 	}
 	for _, f := range sutils.FindFile(rootDir) {
@@ -41,7 +44,7 @@ func (cf *CacheFiles) GetCacheFromUrl(fname, url, user, password string) (string
 		if len(url) == 0 {
 			return "", fmt.Errorf("Can not download. Link is empty")
 		}
-		filePath = path.Join(cf.rootPath, fname)
+		filePath = filepath.Join(cf.rootPath, fname)
 		if err := sutils.HTTPDownLoadUrlToFile(url, user, password, false, filePath, time.Minute*30); err == nil {
 			cf.SetDefault(fname, filePath)
 			return filePath, nil
@@ -65,6 +68,6 @@ func (cf *CacheFiles) GetCacheFile(fname string) (string, bool) {
 	if filePath, ok := cf.GetWithDefaultExpirationUpdate(fname); ok && sutils.PathIsFile(filePath) {
 		return filePath, ok
 	} else {
-		return "", false // creaate new path
+		return filepath.Join(cf.rootPath, fname), false // creaate new path
 	}
 }
