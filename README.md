@@ -29,7 +29,7 @@ import (
 func main() {
 	// Create a cache with a default expiration time of 5 minutes, and which
 	// purges expired items every 10 minutes
-	c := goramcache.New[interface{}](5*time.Minute, 10*time.Minute)
+	c := goramcache.NewCache[interface{}](5*time.Minute, 10*time.Minute)
 
 	// Set the value of the key "foo" to "bar", with the default expiration time
 	c.Set("foo", "bar", goramcache.DefaultExpiration)

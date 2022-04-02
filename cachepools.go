@@ -8,28 +8,23 @@ import (
 	"math/big"
 	insecurerand "math/rand"
 	"os"
-	"runtime"
 	"time"
 )
 
 // This is an experimental and unexported (for now) attempt at making a cache
 // with better algorithmic complexity than the standard one, namely by
 // preventing write locks of the entire cache when an item is added. As of the
-// time of writing, the overhead of selecting buckets results in cache
+// time of writing, the overhead of selecting getpools results in cache
 // operations being about twice as slow as for the standard cache with small
 // total cache sizes, and faster for larger ones.
 //
 // See cache_test.go for a few benchmarks.
 
-type CacheGroups[T any] struct {
-	*cacheGroups[T]
-}
-
-type cacheGroups[T any] struct {
+type CachePools[T any] struct {
 	seed    uint32
 	m       uint32
 	cs      []*cache[T]
-	janitor *shardedJanitor[T]
+	janitor *Janitor
 }
 
 // djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
@@ -64,84 +59,96 @@ func djb33(seed uint32, k string) uint32 {
 	return d ^ (d >> 16)
 }
 
-func (sc *cacheGroups[T]) bucket(k string) *cache[T] {
+func (sc *CachePools[T]) getpool(k string) *cache[T] {
 	return sc.cs[djb33(sc.seed, k)%sc.m]
 }
 
-func (sc *cacheGroups[T]) Set(k string, x T, d time.Duration) {
-	sc.bucket(k).Set(k, x, d)
+func (sc *CachePools[T]) Set(k string, x T, d time.Duration) {
+	sc.getpool(k).Set(k, x, d)
 }
 
-func (sc *cacheGroups[T]) SetDefault(k string, x T) {
-	sc.bucket(k).SetDefault(k, x)
+func (sc *CachePools[T]) SetDefault(k string, x T) {
+	sc.getpool(k).SetDefault(k, x)
 }
 
-func (sc *cacheGroups[T]) Add(k string, x T, d time.Duration) error {
-	return sc.bucket(k).Add(k, x, d)
+func (sc *CachePools[T]) Add(k string, x T, d time.Duration) error {
+	return sc.getpool(k).Add(k, x, d)
 }
 
-func (sc *cacheGroups[T]) Replace(k string, x T, d time.Duration) error {
-	return sc.bucket(k).Replace(k, x, d)
+func (sc *CachePools[T]) Replace(k string, x T, d time.Duration) error {
+	return sc.getpool(k).Replace(k, x, d)
 }
 
-func (sc *cacheGroups[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error {
-	return sc.bucket(k).Edit(k, x, apFunc)
+func (sc *CachePools[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error {
+	return sc.getpool(k).Edit(k, x, apFunc)
 }
-func (sc *cacheGroups[T]) Get(k string) (T, bool) {
-	return sc.bucket(k).Get(k)
+func (sc *CachePools[T]) Get(k string) (T, bool) {
+	return sc.getpool(k).Get(k)
 }
 
-func (sc *cacheGroups[T]) Keys() (keys []string) {
+func (sc *CachePools[T]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	for i, _ := range sc.cs {
 		keys = append(keys, sc.cs[i].Keys()...)
 	}
 	return keys
 }
-func (sc *cacheGroups[T]) GetWithExpirationGet(k string) (T, time.Time, bool) {
-	return sc.bucket(k).GetWithExpiration(k)
+func (sc *CachePools[T]) GetWithExpirationGet(k string) (T, time.Time, bool) {
+	return sc.getpool(k).GetWithExpiration(k)
 }
 
-func (sc *cacheGroups[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
-	return sc.bucket(k).GetWithExpirationUpdate(k, d)
+func (sc *CachePools[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
+	return sc.getpool(k).GetWithExpirationUpdate(k, d)
 }
 
-func (sc *cacheGroups[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
+func (sc *CachePools[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
 	return sc.GetWithDefaultExpirationUpdate(k)
 }
 
-func (sc *cacheGroups[T]) Increment(k string, n int64) error {
-	_, err := sc.bucket(k).Increment(k, n)
+func (sc *CachePools[T]) Increment(k string, n int64) error {
+	_, err := sc.getpool(k).Increment(k, n)
 	return err
 }
 
-func (sc *cacheGroups[T]) Decrement(k string, n int64) error {
-	_, err := sc.bucket(k).Decrement(k, n)
+func (sc *CachePools[T]) Decrement(k string, n int64) error {
+	_, err := sc.getpool(k).Decrement(k, n)
 	return err
 }
 
-func (sc *cacheGroups[T]) Delete(k string) {
-	sc.bucket(k).Delete(k)
+func (sc *CachePools[T]) Delete(k string) {
+	sc.getpool(k).Delete(k)
 }
 
-func (sc *cacheGroups[T]) DeleteExpired() {
+func (sc *CachePools[T]) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
 	}
 }
 
-func (sc *cacheGroups[T]) Load(r io.Reader) error {
+func (sc *CachePools[T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
+	var nexTime time.Time
+	nextTimeCheck = time.UnixMilli(math.MaxInt64)
+	for _, v := range sc.cs {
+		nexTime, needUpdate = v.deleteExpired()
+		if needUpdate && nextTimeCheck.After(nexTime) {
+			nextTimeCheck = nexTime
+		}
+	}
+	return
+}
+
+func (sc *CachePools[T]) Load(r io.Reader) error {
 	dec := gob.NewDecoder(r)
 	items := map[string]Item[T]{}
 	err := dec.Decode(&items)
 	if err == nil {
 		for k, v := range items {
-			sc.bucket(k).mu.Lock()
-			ov, found := sc.bucket(k).items[k]
+			sc.getpool(k).mu.Lock()
+			ov, found := sc.getpool(k).items[k]
 			if !found || ov.Expired() {
-				sc.bucket(k).items[k] = v
+				sc.getpool(k).items[k] = v
 			}
-			sc.bucket(k).mu.Unlock()
+			sc.getpool(k).mu.Unlock()
 		}
 	}
 	return err
@@ -149,7 +156,7 @@ func (sc *cacheGroups[T]) Load(r io.Reader) error {
 
 // Load and add cache items from the given filename, excluding any items with
 // keys that already exist in the current cache.
-func (sc *cacheGroups[T]) LoadFile(fname string) error {
+func (sc *CachePools[T]) LoadFile(fname string) error {
 	fp, err := os.Open(fname)
 	if err != nil {
 		return err
@@ -162,8 +169,8 @@ func (sc *cacheGroups[T]) LoadFile(fname string) error {
 	return fp.Close()
 }
 
-func (sc *cacheGroups[T]) Save(w io.Writer) (err error) {
-	c := New[T](NoExpiration, NoExpiration)
+func (sc *CachePools[T]) Save(w io.Writer) (err error) {
+	c := NewCache[T](NoExpiration, NoExpirationCheck)
 	for i, _ := range sc.cs {
 		sc.cs[i].mu.RLock()
 		defer sc.cs[i].mu.RUnlock()
@@ -180,7 +187,7 @@ func (sc *cacheGroups[T]) Save(w io.Writer) (err error) {
 	return c.Save(w)
 }
 
-func (sc *cacheGroups[T]) SaveFile(fname string) error {
+func (sc *CachePools[T]) SaveFile(fname string) error {
 	fp, err := os.Create(fname)
 	if err != nil {
 		return err
@@ -198,7 +205,7 @@ func (sc *cacheGroups[T]) SaveFile(fname string) error {
 // fields of the items should be checked. Note that explicit synchronization
 // is needed to use a cache and its corresponding Items() return values at
 // the same time, as the maps are shared.
-func (sc *cacheGroups[T]) Items() []map[string]Item[T] {
+func (sc *CachePools[T]) Items() []map[string]Item[T] {
 	res := make([]map[string]Item[T], len(sc.cs))
 	for i, v := range sc.cs {
 		res[i] = v.Items()
@@ -206,59 +213,29 @@ func (sc *cacheGroups[T]) Items() []map[string]Item[T] {
 	return res
 }
 
-func (sc *cacheGroups[T]) Flush() {
+func (sc *CachePools[T]) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
 	}
 }
 
-type shardedJanitor[T any] struct {
-	Interval time.Duration
-	stop     chan bool
-}
-
-func (j *shardedJanitor[T]) Run(sc *cacheGroups[T]) {
-	j.stop = make(chan bool)
-	tick := time.Tick(j.Interval)
-	for {
-		select {
-		case <-tick:
-			sc.DeleteExpired()
-		case <-j.stop:
-			return
-		}
-	}
-}
-
-func stopShardedJanitor[T any](sc *CacheGroups[T]) {
-	sc.janitor.stop <- true
-}
-
-func runShardedJanitor[T any](sc *cacheGroups[T], ci time.Duration) {
-	j := &shardedJanitor[T]{
-		Interval: ci,
-	}
-	sc.janitor = j
-	go j.Run(sc)
-}
-
-func newCacheGroups[T any](n int, de time.Duration) *cacheGroups[T] {
+func newCachePools[T any](n int, de time.Duration) *CachePools[T] {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
 	if err != nil {
-		os.Stderr.Write([]byte("WARNING: go-cache's newCacheGroups failed to read from the system CSPRNG (/dev/urandom or equivalent.) Your system's security may be compromised. Continuing with an insecure seed.\n"))
+		os.Stderr.Write([]byte("WARNING: goramcache's newCachePools failed to read from the system CSPRNG (/dev/urandom or equivalent.) Your system's security may be compromised. Continuing with an insecure seed.\n"))
 		seed = insecurerand.Uint32()
 	} else {
 		seed = uint32(rnd.Uint64())
 	}
-	sc := &cacheGroups[T]{
+	sc := &CachePools[T]{
 		seed: seed,
 		m:    uint32(n),
 		cs:   make([]*cache[T], n),
 	}
 	for i := 0; i < n; i++ {
-		c := &cache[T]{
+		c := &cache[T]{ //not via NewCache to disable janitor
 			defaultExpiration: de,
 			items:             map[string]Item[T]{},
 		}
@@ -267,15 +244,14 @@ func newCacheGroups[T any](n int, de time.Duration) *cacheGroups[T] {
 	return sc
 }
 
-func NewCacheGroups[T any](defaultExpiration, cleanupInterval time.Duration, numgroups int) *CacheGroups[T] {
+func NewCachePools[T any](defaultExpiration, errorAllowTimeExpiration time.Duration, numpools int) *CachePools[T] {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
 	}
-	sc := newCacheGroups[T](numgroups, defaultExpiration)
-	SC := &CacheGroups[T]{sc}
-	if cleanupInterval > 0 {
-		runShardedJanitor(sc, cleanupInterval)
-		runtime.SetFinalizer(SC, stopShardedJanitor[T])
+	sc := newCachePools[T](numpools, defaultExpiration)
+	if errorAllowTimeExpiration > 0 {
+		sc.janitor = NewJanitor(errorAllowTimeExpiration)
+		sc.janitor.Start(sc, sc.deleteExpired)
 	}
-	return SC
+	return sc
 }

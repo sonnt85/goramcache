@@ -26,24 +26,24 @@ var shardedKeys = []string{
 	"foobarbazquux",
 }
 
-func TestCacheGroups(t *testing.T) {
-	tc := NewCacheGroups[string](DefaultExpiration, 0, 13)
+func TestCachePools(t *testing.T) {
+	tc := NewCachePools[string](DefaultExpiration, 0, 13)
 	for _, v := range shardedKeys {
 		tc.Set(v, "value", DefaultExpiration)
 	}
 }
 
-func BenchmarkCacheGroupsGetExpiring(b *testing.B) {
-	benchmarkCacheGroupsGet(b, 5*time.Minute)
+func BenchmarkCachePoolsGetExpiring(b *testing.B) {
+	benchmarkCachePoolsGet(b, 5*time.Minute)
 }
 
-func BenchmarkCacheGroupsGetNotExpiring(b *testing.B) {
-	benchmarkCacheGroupsGet(b, NoExpiration)
+func BenchmarkCachePoolsGetNotExpiring(b *testing.B) {
+	benchmarkCachePoolsGet(b, NoExpiration)
 }
 
-func benchmarkCacheGroupsGet(b *testing.B, exp time.Duration) {
+func benchmarkCachePoolsGet(b *testing.B, exp time.Duration) {
 	b.StopTimer()
-	tc := NewCacheGroups[interface{}](exp, 0, 10)
+	tc := NewCachePools[interface{}](exp, 0, 10)
 	tc.Set("foobarba", "zquux", DefaultExpiration)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -51,18 +51,18 @@ func benchmarkCacheGroupsGet(b *testing.B, exp time.Duration) {
 	}
 }
 
-func BenchmarkCacheGroupsGetManyConcurrentExpiring(b *testing.B) {
-	benchmarkCacheGroupsGetManyConcurrent(b, 5*time.Minute)
+func BenchmarkCachePoolsGetManyConcurrentExpiring(b *testing.B) {
+	benchmarkCachePoolsGetManyConcurrent(b, 5*time.Minute)
 }
 
-func BenchmarkCacheGroupsGetManyConcurrentNotExpiring(b *testing.B) {
-	benchmarkCacheGroupsGetManyConcurrent(b, NoExpiration)
+func BenchmarkCachePoolsGetManyConcurrentNotExpiring(b *testing.B) {
+	benchmarkCachePoolsGetManyConcurrent(b, NoExpiration)
 }
 
-func benchmarkCacheGroupsGetManyConcurrent(b *testing.B, exp time.Duration) {
+func benchmarkCachePoolsGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StopTimer()
 	n := 10000
-	tsc := NewCacheGroups[interface{}](exp, 0, 20)
+	tsc := NewCachePools[interface{}](exp, 0, 20)
 	keys := make([]string, n)
 	for i := 0; i < n; i++ {
 		k := "foo" + strconv.Itoa(i)

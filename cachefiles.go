@@ -14,9 +14,9 @@ type CacheFiles struct {
 	rootPath string
 }
 
-func NewCacheFiles(rootDir string, defaultExpiration, cleanupInterval time.Duration) *CacheFiles {
+func NewCacheFiles(rootDir string, defaultExpiration, errorAllowTimeExpiration time.Duration) *CacheFiles {
 	cf := CacheFiles{
-		Cache:    New[string](defaultExpiration, cleanupInterval),
+		Cache:    NewCache[string](defaultExpiration, errorAllowTimeExpiration),
 		rootPath: rootDir,
 	}
 	cf.OnEvicted(func(k string, v string) {
@@ -54,12 +54,22 @@ func (cf *CacheFiles) GetCacheFromUrl(fname, url, user, password string) (string
 	}
 }
 
-func (cf *CacheFiles) GetCacheFileOrCreate(fname string) (string, bool) {
+func (cf *CacheFiles) GetCacheFileOrCreate(fname string) (pathCacheFile string, isOldFile bool) {
 	if filePath, ok := cf.GetWithDefaultExpirationUpdate(fname); ok && sutils.PathIsFile(filePath) {
 		return filePath, ok
 	} else {
 		filePath := filepath.Join(cf.rootPath, fname)
 		cf.SetDefault(fname, filePath)
+		return filePath, false // creaate new path
+	}
+}
+
+func (cf *CacheFiles) GetCacheFileOrCreateWithExpiration(fname string, d time.Duration) (pathCacheFile string, isOldFile bool) {
+	if filePath, ok := cf.GetWithDefaultExpirationUpdate(fname); ok && sutils.PathIsFile(filePath) {
+		return filePath, ok
+	} else {
+		filePath := filepath.Join(cf.rootPath, fname)
+		cf.Set(fname, filePath, d)
 		return filePath, false // creaate new path
 	}
 }
