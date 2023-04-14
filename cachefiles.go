@@ -1,7 +1,9 @@
 package goramcache
 
 import (
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -10,13 +12,13 @@ import (
 )
 
 type CacheFiles struct {
-	*Cache[string]
+	*Cache[string, string]
 	rootPath string
 }
 
 func NewCacheFiles(rootDir string, defaultExpiration, errorAllowTimeExpiration time.Duration) *CacheFiles {
 	cf := CacheFiles{
-		Cache:    NewCache[string](defaultExpiration, errorAllowTimeExpiration),
+		Cache:    NewCache[string, string](defaultExpiration, errorAllowTimeExpiration),
 		rootPath: rootDir,
 	}
 	cf.OnEvicted(func(k string, v string) {
@@ -37,7 +39,7 @@ func NewCacheFiles(rootDir string, defaultExpiration, errorAllowTimeExpiration t
 	return &cf
 }
 
-func (cf *CacheFiles) GetCacheFromUrl(fname, url, user, password string) (string, error) {
+func (cf *CacheFiles) GetCacheFromUrl(fname, url, user, password string) (pathCacheFile string, err error) {
 	if filePath, ok := cf.GetWithDefaultExpirationUpdate(fname); ok && sutils.PathIsFile(filePath) {
 		return filePath, nil
 	} else { //download file to cache
@@ -80,4 +82,18 @@ func (cf *CacheFiles) GetCacheFile(fname string) (string, bool) {
 	} else {
 		return filepath.Join(cf.rootPath, fname), false // creaate new path
 	}
+}
+
+func (cf *CacheFiles) GetCacheFileContent(fname string) (content []byte, err error) {
+	if filePath, ok := cf.GetCacheFile(fname); ok {
+		content, err = ioutil.ReadFile(filePath)
+		return
+	} else {
+		return content, errors.New("Missing cache file")
+	}
+}
+
+func (cf *CacheFiles) GetCacheFileContentString(fname string) (string, error) {
+	content, err := cf.GetCacheFileContent(fname)
+	return string(content), err
 }

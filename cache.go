@@ -8,9 +8,10 @@ import (
 	"os"
 	"reflect"
 	"regexp"
-	"sort"
 	"sync"
 	"time"
+
+	"github.com/sonnt85/gosyncutils"
 )
 
 type Item[T any] struct {
@@ -33,23 +34,25 @@ const (
 	DefaultExpiration time.Duration = 0
 )
 
-type cache[T any] struct {
+type cache[K comparable, T any] struct {
 	errorAllowTimeExpiration int64
 	defaultExpiration        time.Duration
-	items                    map[string]Item[T]
+	items                    map[K]Item[T]
 	mu                       sync.RWMutex
-	onEvicted                func(string, T)
+	onEvicted                func(K, T)
+	eventDeleteItem          *gosyncutils.EventOpject[struct{}]
 }
 
-type Cache[T any] struct {
-	*cache[T]
+type Cache[K comparable, T any] struct {
+	*cache[K, T]
 	janitor *Janitor
 }
 
 // Add an item to the cache, replacing any existing item. If the duration is 0
 // (DefaultExpiration), the cache's default expiration time is used. If it is -1
 // (NoExpiration), the item never expires.
-func (c *cache[T]) Set(k string, x T, d time.Duration) {
+//go:inline
+func (c *cache[K, T]) Set(k K, x T, d time.Duration) {
 	// "Inlining" of set
 	var e int64
 	if d == DefaultExpiration {
@@ -66,7 +69,8 @@ func (c *cache[T]) Set(k string, x T, d time.Duration) {
 	c.mu.Unlock()
 }
 
-func (c *cache[T]) set(k string, x T, d time.Duration) {
+//go:inline
+func (c *cache[K, T]) set(k K, x T, d time.Duration) {
 	var e int64
 	if d == DefaultExpiration {
 		d = c.defaultExpiration
@@ -82,30 +86,30 @@ func (c *cache[T]) set(k string, x T, d time.Duration) {
 
 // Add an item to the cache, replacing any existing item, using the default
 // expiration.
-func (c *cache[T]) SetDefault(k string, x T) {
+func (c *cache[K, T]) SetDefault(k K, x T) {
 	c.Set(k, x, DefaultExpiration)
 }
 
 // Add an item to the cache only if an item doesn't already exist for the given
 // key, or if the existing item has expired. Returns an error otherwise.
-func (c *cache[T]) Add(k string, x T, d time.Duration) error {
+func (c *cache[K, T]) Add(k K, x T, d time.Duration) error {
 	c.mu.Lock()
 	_, found := c.get(k)
 	if found {
 		c.mu.Unlock()
-		return fmt.Errorf("Item %s already exists", k)
+		return fmt.Errorf("Item %+v already exists", k)
 	}
 	c.set(k, x, d)
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *cache[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error { //TODO update to run
+func (c *cache[K, T]) Edit(k K, x interface{}, apFunc func(T, interface{}) (T, error)) error { //TODO update to run
 	c.mu.Lock()
 	v, found := c.items[k]
 	if !found || v.Expired() {
 		c.mu.Unlock()
-		return fmt.Errorf("Item %q not found", k)
+		return fmt.Errorf("Item %+v not found", k)
 	}
 	edited, err := apFunc(v.Object, x)
 	if err == nil {
@@ -118,12 +122,12 @@ func (c *cache[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T,
 
 // Set a new value for the cache key only if it already exists, and the existing
 // item hasn't expired. Returns an error otherwise.
-func (c *cache[T]) Replace(k string, x T, d time.Duration) error {
+func (c *cache[K, T]) Replace(k K, x T, d time.Duration) error {
 	c.mu.Lock()
 	_, found := c.get(k)
 	if !found {
 		c.mu.Unlock()
-		return fmt.Errorf("Item %s doesn't exist", k)
+		return fmt.Errorf("Item %+v doesn't exist", k)
 	}
 	c.set(k, x, d)
 	c.mu.Unlock()
@@ -132,7 +136,7 @@ func (c *cache[T]) Replace(k string, x T, d time.Duration) error {
 
 // Get an item from the cache. Returns the item or nil, and a bool indicating
 // whether the key was found.
-func (c *cache[T]) Get(k string) (T, bool) {
+func (c *cache[K, T]) Get(k K) (T, bool) {
 	var zero T
 	c.mu.RLock()
 	// "Inlining" of get and Expired
@@ -151,17 +155,40 @@ func (c *cache[T]) Get(k string) (T, bool) {
 	return item.Object, true
 }
 
-func (c *cache[T]) GetThenDelete(k string) (T, bool) {
+// Get an item from the cache. Returns the item or nil, and a bool indicating
+// whether the key was found.
+func (c *cache[K, T]) GetRandom() (key K, val T, b bool) {
+	c.mu.RLock()
+	key, val, b = c.getrandom()
+	c.mu.RUnlock()
+	return
+}
+
+func (c *cache[K, T]) GetRandomThenDelete() (key K, val T, b bool) {
+	c.mu.Lock()
+	key, val, b = c.getrandom()
+	if b {
+		if _, ok := c.delete(key); ok {
+			c.onEvicted(key, val)
+		}
+	}
+	c.mu.Unlock()
+	return
+}
+
+func (c *cache[K, T]) GetThenDelete(k K) (T, bool) {
 	c.mu.Lock()
 	t, ok := c.get(k)
 	if ok {
-		c.delete(k)
+		if _, ok := c.delete(k); ok {
+			c.onEvicted(k, t)
+		}
 	}
 	c.mu.Unlock()
 	return t, ok
 }
 
-func (c *cache[T]) GetOrCreateNew(k string) (T, bool) {
+func (c *cache[K, T]) GetOrCreateNew(k K) (T, bool) {
 	c.mu.RLock()
 	if v, ok := c.get(k); ok {
 		c.mu.Unlock()
@@ -184,7 +211,7 @@ func (c *cache[T]) GetOrCreateNew(k string) (T, bool) {
 // It returns the item or nil, the expiration time if one is set (if the item
 // never expires a zero value for time.Time is returned), and a bool indicating
 // whether the key was found.
-func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
+func (c *cache[K, T]) GetWithExpirationUpdate(k K, d time.Duration) (T, bool) {
 	var zero T
 	c.mu.RLock()
 	item, found := c.items[k]
@@ -213,25 +240,26 @@ func (c *cache[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) 
 	return item.Object, true
 }
 
-func (c *cache[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
+func (c *cache[K, T]) GetWithDefaultExpirationUpdate(k K) (T, bool) {
 	return c.GetWithExpirationUpdate(k, DefaultExpiration)
 }
 
 // Keys returns a sorted slice of all the keys in the cache.
-func (c *cache[T]) Keys() []string {
+func (c *cache[K, T]) Keys() []K {
 	var i int
 	c.mu.RLock()
-	keys := make([]string, len(c.items))
+	keys := make([]K, len(c.items))
 	for k := range c.items {
 		keys[i] = k
 		i++
 	}
 	c.mu.RUnlock()
-	sort.Strings(keys)
+	// keys = slide.Sort(keys)
+	// slice.Sort(keys)
 	return keys
 }
 
-func (c *cache[T]) Values() []T {
+func (c *cache[K, T]) Values() []T {
 	var i int
 	now := time.Now().UnixNano()
 	c.mu.RLock()
@@ -247,14 +275,14 @@ func (c *cache[T]) Values() []T {
 	return values
 }
 
-func (c *cache[T]) Length() int {
+func (c *cache[K, T]) Length() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.items)
 }
 
 //GetMultipleItems returns an array of items corresponding to the input array
-func (c *cache[T]) GetMultipleItems(keys []string) []T {
+func (c *cache[K, T]) GetMultipleItems(keys []K) []T {
 	length := len(keys)
 	var items = make([]T, length)
 	c.mu.RLock()
@@ -266,12 +294,12 @@ func (c *cache[T]) GetMultipleItems(keys []string) []T {
 	return items
 }
 
-func (c *cache[T]) IncrementExpiration(k string, d time.Duration) error {
+func (c *cache[K, T]) IncrementExpiration(k K, d time.Duration) error {
 	c.mu.Lock()
 	v, found := c.items[k]
 	if !found || v.Expired() {
 		c.mu.Unlock()
-		return fmt.Errorf("key %s not found.", k)
+		return fmt.Errorf("key %+v not found.", k)
 	}
 
 	var e int64
@@ -291,7 +319,7 @@ func (c *cache[T]) IncrementExpiration(k string, d time.Duration) error {
 // It returns the item or nil, the expiration time if one is set (if the item
 // never expires a zero value for time.Time is returned), and a bool indicating
 // whether the key was found.
-func (c *cache[T]) GetWithExpiration(k string) (T, time.Time, bool) {
+func (c *cache[K, T]) GetWithExpiration(k K) (T, time.Time, bool) {
 	var zero T
 	c.mu.RLock()
 	// "Inlining" of get and Expired
@@ -318,7 +346,7 @@ func (c *cache[T]) GetWithExpiration(k string) (T, time.Time, bool) {
 	return item.Object, time.Time{}, true
 }
 
-func (c *cache[T]) get(k string) (T, bool) {
+func (c *cache[K, T]) get(k K) (T, bool) {
 	item, found := c.items[k]
 	var zero T
 	if !found {
@@ -333,11 +361,24 @@ func (c *cache[T]) get(k string) (T, bool) {
 	return item.Object, true
 }
 
+//go:inline
+func (c *cache[K, T]) getrandom() (key K, val T, b bool) {
+	var item Item[T]
+	for key, item = range c.items {
+		if (item.Expiration <= 0) || (time.Now().UnixNano() <= item.Expiration) {
+			val = item.Object
+			b = true
+			break
+		}
+	}
+	return
+}
+
 // Increment and return an item of type int, int8, int16, int32, int64, uintptr, uint,
 // uint8, uint32, or uint64, float32 or float64 by n. Returns an error if the
 // item's value is not an integer, if it was not found, or if it is not
 // possible to increment it by n.
-func (c *cache[T]) Increment(k string, n int64) (T, error) {
+func (c *cache[K, T]) Increment(k K, n int64) (T, error) {
 
 	// TODO: Consider adding a constraint to avoid the type switch and provide
 	// compile-time safety
@@ -346,7 +387,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 	v, found := c.items[k]
 	if !found || v.Expired() {
 		c.mu.Unlock()
-		return zero, fmt.Errorf("Item %s not found", k)
+		return zero, fmt.Errorf("Item %+v not found", k)
 	}
 	// Generics does not (currently?) support type switching
 	// To workaround, we convert the value into a interface{}, and switching on that
@@ -382,7 +423,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 		untypedValue = untypedValue.(float64) + float64(n)
 	default:
 		c.mu.Unlock()
-		return zero, fmt.Errorf("The value for %s is not an integer", k)
+		return zero, fmt.Errorf("The value for %+v is not an integer", k)
 	}
 	v.Object = untypedValue.(T)
 	c.items[k] = v
@@ -394,7 +435,7 @@ func (c *cache[T]) Increment(k string, n int64) (T, error) {
 // uint8, uint32, or uint64, float32 or float64 by n. Returns an error if the
 // item's value is not an integer, if it was not found, or if it is not
 // possible to decrement it by n.
-func (c *cache[T]) Decrement(k string, n int64) (T, error) {
+func (c *cache[K, T]) Decrement(k K, n int64) (T, error) {
 
 	// TODO: Consider adding a constraint to avoid the type switch and provide
 	// compile-time safety
@@ -403,7 +444,7 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 	v, found := c.items[k]
 	if !found || v.Expired() {
 		c.mu.Unlock()
-		return zero, fmt.Errorf("Item %s not found", k)
+		return zero, fmt.Errorf("Item %+v not found", k)
 	}
 	// Generics does not (currently?) support type switching
 	// To workaround, we convert the value into a interface{}, and switching on that
@@ -439,7 +480,7 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 		untypedValue = untypedValue.(float64) - float64(n)
 	default:
 		c.mu.Unlock()
-		return zero, fmt.Errorf("The value for %s is not an integer", k)
+		return zero, fmt.Errorf("The value for %+v is not an integer", k)
 	}
 	v.Object = untypedValue.(T)
 	c.items[k] = v
@@ -448,7 +489,7 @@ func (c *cache[T]) Decrement(k string, n int64) (T, error) {
 }
 
 // Delete an item from the cache. Does nothing if the key is not in the cache.
-func (c *cache[T]) Delete(k string) {
+func (c *cache[K, T]) Delete(k K) {
 	c.mu.Lock()
 	v, evicted := c.delete(k)
 	c.mu.Unlock()
@@ -457,16 +498,24 @@ func (c *cache[T]) Delete(k string) {
 	}
 }
 
-func (c *cache[T]) DeleteRegex(rule string) {
+func (c *cache[K, T]) DeleteRegex(rule string) {
+	var str string
+	var ok bool
 	re, _ := regexp.Compile(rule)
+
 	for k := range c.items {
-		if re.MatchString(k) {
+		str, ok = any(k).(string)
+		if !ok {
+			continue
+		}
+		if re.MatchString(str) {
 			c.Delete(k)
 		}
 	}
 }
 
-func (c *cache[T]) delete(k string) (T, bool) {
+//delete item and return item Object and onevicted bool
+func (c *cache[K, T]) delete(k K) (T, bool) {
 	var zero T
 	if c.onEvicted != nil {
 		if v, found := c.items[k]; found {
@@ -475,25 +524,26 @@ func (c *cache[T]) delete(k string) (T, bool) {
 		}
 	}
 	delete(c.items, k)
+	c.eventDeleteItem.SendBroacast()
 	return zero, false
 }
 
-type keyAndValue[T any] struct {
-	key   string
+type keyAndValue[K comparable, T any] struct {
+	key   K
 	value T
 }
 
 // Delete all expired items from the cache.
-func (c *cache[T]) DeleteExpired() {
-	var evictedItems []keyAndValue[T]
+func (c *cache[K, T]) DeleteExpired() {
+	var evictedItems []keyAndValue[K, T]
 	now := time.Now().UnixNano()
 	c.mu.Lock()
 	for k, v := range c.items {
 		// "Inlining" of expired
-		if v.Expiration > 0 && now > v.Expiration {
+		if v.Expiration > 0 && ((now + c.errorAllowTimeExpiration) > v.Expiration) {
 			ov, evicted := c.delete(k)
 			if evicted {
-				evictedItems = append(evictedItems, keyAndValue[T]{k, ov})
+				evictedItems = append(evictedItems, keyAndValue[K, T]{k, ov})
 			}
 		}
 	}
@@ -504,18 +554,18 @@ func (c *cache[T]) DeleteExpired() {
 }
 
 // Delete all expired items from the cache, call by janitor
-func (c *cache[T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
-	var evictedItems []keyAndValue[T]
+func (c *cache[K, T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
+	var evictedItems []keyAndValue[K, T]
 	var minExpiration int64
 	now := time.Now().UnixNano()
 	minExpiration = math.MaxInt64
 	c.mu.Lock()
 	for k, v := range c.items {
 		if v.Expiration > 0 {
-			if now+c.errorAllowTimeExpiration > v.Expiration {
+			if (now + c.errorAllowTimeExpiration) > v.Expiration {
 				ov, evicted := c.delete(k)
 				if evicted {
-					evictedItems = append(evictedItems, keyAndValue[T]{k, ov})
+					evictedItems = append(evictedItems, keyAndValue[K, T]{k, ov})
 				}
 			} else {
 				if v.Expiration < minExpiration {
@@ -536,7 +586,7 @@ func (c *cache[T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
 // Sets an (optional) function that is called with the key and value when an
 // item is evicted from the cache. (Including when it is deleted manually, but
 // not when it is overwritten.) Set to nil to disable.
-func (c *cache[T]) OnEvicted(f func(string, T)) {
+func (c *cache[K, T]) OnEvicted(f func(K, T)) {
 	c.mu.Lock()
 	c.onEvicted = f
 	c.mu.Unlock()
@@ -546,7 +596,7 @@ func (c *cache[T]) OnEvicted(f func(string, T)) {
 //
 // NOTE: This method is deprecated in favor of c.Items() and NewFrom() (see the
 // documentation for NewFrom().)
-func (c *cache[T]) Save(w io.Writer) (err error) {
+func (c *cache[K, T]) Save(w io.Writer) (err error) {
 	enc := gob.NewEncoder(w)
 	defer func() {
 		if x := recover(); x != nil {
@@ -567,7 +617,7 @@ func (c *cache[T]) Save(w io.Writer) (err error) {
 //
 // NOTE: This method is deprecated in favor of c.Items() and NewFrom() (see the
 // documentation for NewFrom().)
-func (c *cache[T]) SaveFile(fname string) error {
+func (c *cache[K, T]) SaveFile(fname string) error {
 	fp, err := os.Create(fname)
 	if err != nil {
 		return err
@@ -585,9 +635,9 @@ func (c *cache[T]) SaveFile(fname string) error {
 //
 // NOTE: This method is deprecated in favor of c.Items() and NewFrom() (see the
 // documentation for NewFrom().)
-func (c *cache[T]) Load(r io.Reader) error {
+func (c *cache[K, T]) Load(r io.Reader) error {
 	dec := gob.NewDecoder(r)
-	items := map[string]Item[T]{}
+	items := map[K]Item[T]{}
 	err := dec.Decode(&items)
 	if err == nil {
 		c.mu.Lock()
@@ -607,7 +657,7 @@ func (c *cache[T]) Load(r io.Reader) error {
 //
 // NOTE: This method is deprecated in favor of c.Items() and NewFrom() (see the
 // documentation for NewFrom().)
-func (c *cache[T]) LoadFile(fname string) error {
+func (c *cache[K, T]) LoadFile(fname string) error {
 	fp, err := os.Open(fname)
 	if err != nil {
 		return err
@@ -622,10 +672,10 @@ func (c *cache[T]) LoadFile(fname string) error {
 
 // Iterate every item by item handle items from cache,and if the handle returns to false,
 // it will be interrupted and return false.
-func (c *cache[T]) Iterate(f func(key string, item T) bool) bool {
+func (c *cache[K, T]) Iterate(f func(key K, item T) bool) bool {
 	now := time.Now().UnixNano()
 	c.mu.RLock()
-	keys := make([]string, len(c.items))
+	keys := make([]K, len(c.items))
 	i := 0
 	for k, v := range c.items {
 		// "Inlining" of Expired
@@ -652,10 +702,10 @@ func (c *cache[T]) Iterate(f func(key string, item T) bool) bool {
 }
 
 // Copies all unexpired items in the cache into a new map and returns it.
-func (c *cache[T]) Items() map[string]Item[T] {
+func (c *cache[K, T]) Items() map[K]Item[T] {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	m := make(map[string]Item[T], len(c.items))
+	m := make(map[K]Item[T], len(c.items))
 	now := time.Now().UnixNano()
 	for k, v := range c.items {
 		if v.Expiration > 0 {
@@ -670,7 +720,7 @@ func (c *cache[T]) Items() map[string]Item[T] {
 
 // Returns the number of items in the cache. This may include items that have
 // expired, but have not yet been cleaned up.
-func (c *cache[T]) ItemCount() int {
+func (c *cache[K, T]) ItemCount() int {
 	c.mu.RLock()
 	n := len(c.items)
 	c.mu.RUnlock()
@@ -678,30 +728,32 @@ func (c *cache[T]) ItemCount() int {
 }
 
 // Delete all items from the cache.
-func (c *cache[T]) Flush() {
+func (c *cache[K, T]) Flush() {
 	c.mu.Lock()
-	c.items = map[string]Item[T]{}
+	c.items = map[K]Item[T]{}
 	c.mu.Unlock()
 }
 
-func (c *Cache[T]) SetNextCheckExpireate(d time.Duration) {
+func (c *Cache[K, T]) SetNextCheckExpireate(d time.Duration) {
 	c.janitor.SetNextCheckExpire(d)
 }
 
-func newcache[T any](de, errorAllowTimeExpiration time.Duration, m map[string]Item[T]) *cache[T] {
+func newcache[K comparable, T any](de, errorAllowTimeExpiration time.Duration, m map[K]Item[T]) *cache[K, T] {
 	if de == 0 {
 		de = -1
 	}
-	c := &cache[T]{
-		defaultExpiration: de,
-		items:             m,
+	c := &cache[K, T]{
+		errorAllowTimeExpiration: errorAllowTimeExpiration.Nanoseconds(),
+		defaultExpiration:        de,
+		items:                    m,
+		eventDeleteItem:          gosyncutils.NewEventOpject[struct{}](),
 	}
 	return c
 }
 
-func newCache[T any](de time.Duration, errorAllowTimeExpiration time.Duration, m map[string]Item[T]) *Cache[T] {
+func newCache[K comparable, T any](de time.Duration, errorAllowTimeExpiration time.Duration, m map[K]Item[T]) *Cache[K, T] {
 	c := newcache(de, errorAllowTimeExpiration, m)
-	C := &Cache[T]{
+	C := &Cache[K, T]{
 		cache: c,
 	}
 	if errorAllowTimeExpiration > 0 {
@@ -716,9 +768,9 @@ func newCache[T any](de time.Duration, errorAllowTimeExpiration time.Duration, m
 // the items in the cache never expire (by default), and must be deleted
 // manually. If the cleanup errorAllowTimeExpiration is less than one, expired items are not
 // deleted from the cache before calling c.DeleteExpired().
-func NewCache[T any](defaultExpiration, errorAllowTimeExpiration time.Duration) *Cache[T] {
-	items := make(map[string]Item[T])
-	return newCache[T](defaultExpiration, errorAllowTimeExpiration, items)
+func NewCache[K comparable, T any](defaultExpiration, errorAllowTimeExpiration time.Duration) *Cache[K, T] {
+	items := make(map[K]Item[T])
+	return newCache[K, T](defaultExpiration, errorAllowTimeExpiration, items)
 }
 
 // Return a new cache with a given default expiration duration and cleanup
@@ -742,6 +794,6 @@ func NewCache[T any](defaultExpiration, errorAllowTimeExpiration time.Duration) 
 // gob.Register() the individual types stored in the cache before encoding a
 // map retrieved with c.Items(), and to register those same types before
 // decoding a blob containing an items map.
-func NewCacheFrom[T any](defaultExpiration, errorAllowTimeExpiration time.Duration, items map[string]Item[T]) *Cache[T] {
+func NewCacheFrom[K comparable, T any](defaultExpiration, errorAllowTimeExpiration time.Duration, items map[K]Item[T]) *Cache[K, T] {
 	return newCache(defaultExpiration, errorAllowTimeExpiration, items)
 }

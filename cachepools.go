@@ -9,6 +9,8 @@ import (
 	insecurerand "math/rand"
 	"os"
 	"time"
+
+	"golang.org/x/exp/constraints"
 )
 
 // This is an experimental and unexported (for now) attempt at making a cache
@@ -20,15 +22,54 @@ import (
 //
 // See cache_test.go for a few benchmarks.
 
-type CachePools[T any] struct {
-	seed    uint32
-	m       uint32
-	cs      []*cache[T]
-	janitor *Janitor
+type CachePools[K constraints.Ordered, T any] struct {
+	seed     uint32
+	numPools uint32
+	cs       []*cache[K, T]
+	janitor  *Janitor
+}
+
+func djb33[K constraints.Ordered](seed uint32, k K) (retval uint32) {
+	str, ok := any(k).(string)
+	if !ok {
+		if i, ok := any(k).(uint32); ok {
+			return i
+		} else {
+			return //no pools
+		}
+	}
+	var (
+		l = uint32(len(str))
+		d = 5381 + seed + l
+		i = uint32(0)
+	)
+	// Why is all this 5x faster than a for loop?
+	if l >= 4 {
+		for i < l-4 {
+			d = (d * 33) ^ uint32(str[i])
+			d = (d * 33) ^ uint32(str[i+1])
+			d = (d * 33) ^ uint32(str[i+2])
+			d = (d * 33) ^ uint32(str[i+3])
+			i += 4
+		}
+	}
+	switch l - i {
+	case 1:
+	case 2:
+		d = (d * 33) ^ uint32(str[i])
+	case 3:
+		d = (d * 33) ^ uint32(str[i])
+		d = (d * 33) ^ uint32(str[i+1])
+	case 4:
+		d = (d * 33) ^ uint32(str[i])
+		d = (d * 33) ^ uint32(str[i+1])
+		d = (d * 33) ^ uint32(str[i+2])
+	}
+	return d ^ (d >> 16)
 }
 
 // djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
-func djb33(seed uint32, k string) uint32 {
+func djb33Old(seed uint32, k string) uint32 {
 	var (
 		l = uint32(len(k))
 		d = 5381 + seed + l
@@ -59,73 +100,73 @@ func djb33(seed uint32, k string) uint32 {
 	return d ^ (d >> 16)
 }
 
-func (sc *CachePools[T]) getpool(k string) *cache[T] {
-	return sc.cs[djb33(sc.seed, k)%sc.m]
+func (sc *CachePools[K, T]) getpool(k K) *cache[K, T] {
+	return sc.cs[djb33[K](sc.seed, k)%sc.numPools]
 }
 
-func (sc *CachePools[T]) Set(k string, x T, d time.Duration) {
+func (sc *CachePools[K, T]) Set(k K, x T, d time.Duration) {
 	sc.getpool(k).Set(k, x, d)
 }
 
-func (sc *CachePools[T]) SetDefault(k string, x T) {
+func (sc *CachePools[K, T]) SetDefault(k K, x T) {
 	sc.getpool(k).SetDefault(k, x)
 }
 
-func (sc *CachePools[T]) Add(k string, x T, d time.Duration) error {
+func (sc *CachePools[K, T]) Add(k K, x T, d time.Duration) error {
 	return sc.getpool(k).Add(k, x, d)
 }
 
-func (sc *CachePools[T]) Replace(k string, x T, d time.Duration) error {
+func (sc *CachePools[K, T]) Replace(k K, x T, d time.Duration) error {
 	return sc.getpool(k).Replace(k, x, d)
 }
 
-func (sc *CachePools[T]) Edit(k string, x interface{}, apFunc func(T, interface{}) (T, error)) error {
+func (sc *CachePools[K, T]) Edit(k K, x interface{}, apFunc func(T, interface{}) (T, error)) error {
 	return sc.getpool(k).Edit(k, x, apFunc)
 }
-func (sc *CachePools[T]) Get(k string) (T, bool) {
+func (sc *CachePools[K, T]) Get(k K) (T, bool) {
 	return sc.getpool(k).Get(k)
 }
 
-func (sc *CachePools[T]) Keys() (keys []string) {
-	keys = make([]string, 0)
+func (sc *CachePools[K, T]) Keys() (keys []K) {
+	keys = make([]K, 0)
 	for i, _ := range sc.cs {
 		keys = append(keys, sc.cs[i].Keys()...)
 	}
 	return keys
 }
-func (sc *CachePools[T]) GetWithExpirationGet(k string) (T, time.Time, bool) {
+func (sc *CachePools[K, T]) GetWithExpirationGet(k K) (T, time.Time, bool) {
 	return sc.getpool(k).GetWithExpiration(k)
 }
 
-func (sc *CachePools[T]) GetWithExpirationUpdate(k string, d time.Duration) (T, bool) {
+func (sc *CachePools[K, T]) GetWithExpirationUpdate(k K, d time.Duration) (T, bool) {
 	return sc.getpool(k).GetWithExpirationUpdate(k, d)
 }
 
-func (sc *CachePools[T]) GetWithDefaultExpirationUpdate(k string) (T, bool) {
+func (sc *CachePools[K, T]) GetWithDefaultExpirationUpdate(k K) (T, bool) {
 	return sc.GetWithDefaultExpirationUpdate(k)
 }
 
-func (sc *CachePools[T]) Increment(k string, n int64) error {
+func (sc *CachePools[K, T]) Increment(k K, n int64) error {
 	_, err := sc.getpool(k).Increment(k, n)
 	return err
 }
 
-func (sc *CachePools[T]) Decrement(k string, n int64) error {
+func (sc *CachePools[K, T]) Decrement(k K, n int64) error {
 	_, err := sc.getpool(k).Decrement(k, n)
 	return err
 }
 
-func (sc *CachePools[T]) Delete(k string) {
+func (sc *CachePools[K, T]) Delete(k K) {
 	sc.getpool(k).Delete(k)
 }
 
-func (sc *CachePools[T]) DeleteExpired() {
+func (sc *CachePools[K, T]) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
 	}
 }
 
-func (sc *CachePools[T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
+func (sc *CachePools[K, T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
 	var nexTime time.Time
 	nextTimeCheck = time.UnixMilli(math.MaxInt64)
 	for _, v := range sc.cs {
@@ -137,9 +178,9 @@ func (sc *CachePools[T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bo
 	return
 }
 
-func (sc *CachePools[T]) Load(r io.Reader) error {
+func (sc *CachePools[K, T]) Load(r io.Reader) error {
 	dec := gob.NewDecoder(r)
-	items := map[string]Item[T]{}
+	items := map[K]Item[T]{}
 	err := dec.Decode(&items)
 	if err == nil {
 		for k, v := range items {
@@ -156,7 +197,7 @@ func (sc *CachePools[T]) Load(r io.Reader) error {
 
 // Load and add cache items from the given filename, excluding any items with
 // keys that already exist in the current cache.
-func (sc *CachePools[T]) LoadFile(fname string) error {
+func (sc *CachePools[K, T]) LoadFile(fname string) error {
 	fp, err := os.Open(fname)
 	if err != nil {
 		return err
@@ -169,8 +210,8 @@ func (sc *CachePools[T]) LoadFile(fname string) error {
 	return fp.Close()
 }
 
-func (sc *CachePools[T]) Save(w io.Writer) (err error) {
-	c := NewCache[T](NoExpiration, NoExpirationCheck)
+func (sc *CachePools[K, T]) Save(w io.Writer) (err error) {
+	c := NewCache[K, T](NoExpiration, NoExpirationCheck)
 	for i, _ := range sc.cs {
 		sc.cs[i].mu.RLock()
 		defer sc.cs[i].mu.RUnlock()
@@ -187,7 +228,7 @@ func (sc *CachePools[T]) Save(w io.Writer) (err error) {
 	return c.Save(w)
 }
 
-func (sc *CachePools[T]) SaveFile(fname string) error {
+func (sc *CachePools[K, T]) SaveFile(fname string) error {
 	fp, err := os.Create(fname)
 	if err != nil {
 		return err
@@ -205,21 +246,21 @@ func (sc *CachePools[T]) SaveFile(fname string) error {
 // fields of the items should be checked. Note that explicit synchronization
 // is needed to use a cache and its corresponding Items() return values at
 // the same time, as the maps are shared.
-func (sc *CachePools[T]) Items() []map[string]Item[T] {
-	res := make([]map[string]Item[T], len(sc.cs))
+func (sc *CachePools[K, T]) Items() []map[K]Item[T] {
+	res := make([]map[K]Item[T], len(sc.cs))
 	for i, v := range sc.cs {
 		res[i] = v.Items()
 	}
 	return res
 }
 
-func (sc *CachePools[T]) Flush() {
+func (sc *CachePools[K, T]) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
 	}
 }
 
-func newCachePools[T any](n int, de time.Duration) *CachePools[T] {
+func newCachePools[K constraints.Ordered, T any](n int, de time.Duration) *CachePools[K, T] {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
@@ -229,26 +270,26 @@ func newCachePools[T any](n int, de time.Duration) *CachePools[T] {
 	} else {
 		seed = uint32(rnd.Uint64())
 	}
-	sc := &CachePools[T]{
-		seed: seed,
-		m:    uint32(n),
-		cs:   make([]*cache[T], n),
+	sc := &CachePools[K, T]{
+		seed:     seed,
+		numPools: uint32(n),
+		cs:       make([]*cache[K, T], n),
 	}
 	for i := 0; i < n; i++ {
-		c := &cache[T]{ //not via NewCache to disable janitor
+		c := &cache[K, T]{ //not via NewCache to disable janitor
 			defaultExpiration: de,
-			items:             map[string]Item[T]{},
+			items:             map[K]Item[T]{},
 		}
 		sc.cs[i] = c
 	}
 	return sc
 }
 
-func NewCachePools[T any](defaultExpiration, errorAllowTimeExpiration time.Duration, numpools int) *CachePools[T] {
+func NewCachePools[K constraints.Ordered, T any](defaultExpiration, errorAllowTimeExpiration time.Duration, numpools int) *CachePools[K, T] {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
 	}
-	sc := newCachePools[T](numpools, defaultExpiration)
+	sc := newCachePools[K, T](numpools, defaultExpiration)
 	if errorAllowTimeExpiration > 0 {
 		sc.janitor = NewJanitor(errorAllowTimeExpiration)
 		sc.janitor.Start(sc, sc.deleteExpired)

@@ -27,7 +27,7 @@ var shardedKeys = []string{
 }
 
 func TestCachePools(t *testing.T) {
-	tc := NewCachePools[string](DefaultExpiration, 0, 13)
+	tc := NewCachePools[string, any](DefaultExpiration, 0, 13)
 	for _, v := range shardedKeys {
 		tc.Set(v, "value", DefaultExpiration)
 	}
@@ -43,7 +43,7 @@ func BenchmarkCachePoolsGetNotExpiring(b *testing.B) {
 
 func benchmarkCachePoolsGet(b *testing.B, exp time.Duration) {
 	b.StopTimer()
-	tc := NewCachePools[interface{}](exp, 0, 10)
+	tc := NewCachePools[string, interface{}](exp, 0, 10)
 	tc.Set("foobarba", "zquux", DefaultExpiration)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -62,7 +62,7 @@ func BenchmarkCachePoolsGetManyConcurrentNotExpiring(b *testing.B) {
 func benchmarkCachePoolsGetManyConcurrent(b *testing.B, exp time.Duration) {
 	b.StopTimer()
 	n := 10000
-	tsc := NewCachePools[interface{}](exp, 0, 20)
+	tsc := NewCachePools[string, interface{}](exp, 0, 20)
 	keys := make([]string, n)
 	for i := 0; i < n; i++ {
 		k := "foo" + strconv.Itoa(i)
