@@ -51,6 +51,7 @@ type Cache[K comparable, T any] struct {
 // Add an item to the cache, replacing any existing item. If the duration is 0
 // (DefaultExpiration), the cache's default expiration time is used. If it is -1
 // (NoExpiration), the item never expires.
+//
 //go:inline
 func (c *cache[K, T]) Set(k K, x T, d time.Duration) {
 	// "Inlining" of set
@@ -281,7 +282,7 @@ func (c *cache[K, T]) Length() int {
 	return len(c.items)
 }
 
-//GetMultipleItems returns an array of items corresponding to the input array
+// GetMultipleItems returns an array of items corresponding to the input array
 func (c *cache[K, T]) GetMultipleItems(keys []K) []T {
 	length := len(keys)
 	var items = make([]T, length)
@@ -514,7 +515,7 @@ func (c *cache[K, T]) DeleteRegex(rule string) {
 	}
 }
 
-//delete item and return item Object and onevicted bool
+// delete item and return item Object and onevicted bool
 func (c *cache[K, T]) delete(k K) (T, bool) {
 	var zero T
 	if c.onEvicted != nil {
@@ -763,7 +764,7 @@ func newCache[K comparable, T any](de time.Duration, errorAllowTimeExpiration ti
 	return C
 }
 
-// Return a new cache with a given default expiration duration and cleanup
+// Return a new cache with a given default expiration duration (defaultExpiration) and cleanup
 // interval. If the expiration duration is less than one (or NoExpiration),
 // the items in the cache never expire (by default), and must be deleted
 // manually. If the cleanup errorAllowTimeExpiration is less than one, expired items are not

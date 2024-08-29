@@ -17,7 +17,8 @@ type Janitor struct {
 func NewJanitor(interval time.Duration) *Janitor {
 	return &Janitor{
 		interval: interval,
-		stop:     make(chan bool, 0),
+		stop:     make(chan bool),
+		timer:    time.NewTimer(0),
 	}
 }
 
@@ -61,7 +62,7 @@ func (j *Janitor) Start(obj any, f func() (nextCheckAt time.Time, needUpdateForN
 				nextTime, ok = f()
 				j.Lock()
 				if ok && j.nextTimeExpire.After(nextTime) {
-					j.timer.Reset(nextTime.Sub(time.Now()))
+					j.timer.Reset(time.Until(nextTime))
 					j.nextTimeExpire = nextTime
 				} else {
 					j.timer.Reset(j.interval)
@@ -75,6 +76,7 @@ func (j *Janitor) Start(obj any, f func() (nextCheckAt time.Time, needUpdateForN
 		}
 	}()
 	runtime.SetFinalizer(obj, func(obj any) {
+		// fmt.Println("Exit janitor")
 		j.stop <- true
 	})
 }

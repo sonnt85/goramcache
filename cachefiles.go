@@ -3,7 +3,6 @@ package goramcache
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -86,7 +85,7 @@ func (cf *CacheFiles) GetCacheFile(fname string) (string, bool) {
 
 func (cf *CacheFiles) GetCacheFileContent(fname string) (content []byte, err error) {
 	if filePath, ok := cf.GetCacheFile(fname); ok {
-		content, err = ioutil.ReadFile(filePath)
+		content, err = os.ReadFile(filePath)
 		return
 	} else {
 		return content, errors.New("Missing cache file")
