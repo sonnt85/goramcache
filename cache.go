@@ -40,7 +40,7 @@ type cache[K comparable, T any] struct {
 	items                    map[K]Item[T]
 	mu                       sync.RWMutex
 	onEvicted                func(K, T)
-	eventDeleteItem          *gosyncutils.EventOpject[struct{}]
+	eventDeleteItem          *gosyncutils.EventObject[struct{}]
 }
 
 type Cache[K comparable, T any] struct {
@@ -260,16 +260,14 @@ func (c *cache[K, T]) Keys() []K {
 }
 
 func (c *cache[K, T]) Values() []T {
-	var i int
 	now := time.Now().UnixNano()
 	c.mu.RLock()
-	values := make([]T, len(c.items))
+	values := make([]T, 0, len(c.items))
 	for _, v := range c.items {
 		if v.Expiration > 0 && now > v.Expiration {
 			continue
 		}
-		values[i] = v.Object
-		i++
+		values = append(values, v.Object)
 	}
 	c.mu.RUnlock()
 	return values
@@ -277,8 +275,9 @@ func (c *cache[K, T]) Values() []T {
 
 func (c *cache[K, T]) Length() int {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.items)
+	n := len(c.items)
+	c.mu.RUnlock()
+	return n
 }
 
 // GetMultipleItems returns an array of items corresponding to the input array
@@ -500,25 +499,21 @@ func (c *cache[K, T]) Delete(k K) {
 }
 
 func (c *cache[K, T]) DeleteRegex(rule string) {
-	var str string
-	var ok bool
-	re, _ := regexp.Compile(rule)
-
+	re := regexp.MustCompile(rule)
 	c.mu.RLock()
-	keys := make([]K, 0, len(c.items))
+	var toDelete []K
 	for k := range c.items {
-		keys = append(keys, k)
+		if str, ok := any(k).(string); ok && re.MatchString(str) {
+			toDelete = append(toDelete, k)
+		}
 	}
 	c.mu.RUnlock()
-
-	for _, k := range keys {
-		str, ok = any(k).(string)
-		if !ok {
-			continue
+	if len(toDelete) > 0 {
+		c.mu.Lock()
+		for _, k := range toDelete {
+			c.delete(k)
 		}
-		if re.MatchString(str) {
-			c.Delete(k)
-		}
+		c.mu.Unlock()
 	}
 }
 
@@ -532,7 +527,7 @@ func (c *cache[K, T]) delete(k K) (T, bool) {
 		}
 	}
 	delete(c.items, k)
-	c.eventDeleteItem.SendBroacast()
+	c.eventDeleteItem.SendBroadcast()
 	return zero, false
 }
 
@@ -681,28 +676,14 @@ func (c *cache[K, T]) LoadFile(fname string) error {
 // Iterate every item by item handle items from cache,and if the handle returns to false,
 // it will be interrupted and return false.
 func (c *cache[K, T]) Iterate(f func(key K, item T) bool) bool {
-	now := time.Now().UnixNano()
 	c.mu.RLock()
-	keys := make([]K, len(c.items))
-	i := 0
+	defer c.mu.RUnlock()
+	now := time.Now().UnixNano()
 	for k, v := range c.items {
-		// "Inlining" of Expired
 		if v.Expiration > 0 && now > v.Expiration {
 			continue
 		}
-		keys[i] = k
-		i++
-	}
-	c.mu.RUnlock()
-	keys = keys[:i]
-	for _, key := range keys {
-		c.mu.RLock()
-		item, ok := c.items[key]
-		c.mu.RUnlock()
-		if !ok {
-			continue
-		}
-		if !f(key, item.Object) {
+		if !f(k, v.Object) {
 			return false
 		}
 	}
@@ -754,7 +735,7 @@ func newcache[K comparable, T any](de, errorAllowTimeExpiration time.Duration, m
 		errorAllowTimeExpiration: errorAllowTimeExpiration.Nanoseconds(),
 		defaultExpiration:        de,
 		items:                    m,
-		eventDeleteItem:          gosyncutils.NewEventOpject[struct{}](),
+		eventDeleteItem:          gosyncutils.NewEventObject[struct{}](),
 	}
 	return c
 }

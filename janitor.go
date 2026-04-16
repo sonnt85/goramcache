@@ -77,6 +77,9 @@ func (j *Janitor) Start(obj any, f func() (nextCheckAt time.Time, needUpdateForN
 	}()
 	runtime.SetFinalizer(obj, func(obj any) {
 		// fmt.Println("Exit janitor")
-		j.stop <- true
+		select {
+		case j.stop <- true:
+		default:
+		}
 	})
 }
