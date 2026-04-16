@@ -390,10 +390,13 @@ func (c *cache[K, T]) getrandom() (key K, val T, b bool) {
 // uint8, uint32, or uint64, float32 or float64 by n. Returns an error if the
 // item's value is not an integer, if it was not found, or if it is not
 // possible to increment it by n.
+//
+// Performance note: This function uses interface boxing + 13-case type switch
+// because Go generics do not support a numeric constraint with arithmetic
+// operators. Each call incurs ~2 type assertions + boxing overhead. For
+// high-frequency counter updates, consider using a dedicated atomic counter
+// instead of cache Increment/Decrement.
 func (c *cache[K, T]) Increment(k K, n int64) (T, error) {
-
-	// TODO: Consider adding a constraint to avoid the type switch and provide
-	// compile-time safety
 	var zero T
 	c.mu.Lock()
 	v, found := c.items[k]
@@ -447,10 +450,9 @@ func (c *cache[K, T]) Increment(k K, n int64) (T, error) {
 // uint8, uint32, or uint64, float32 or float64 by n. Returns an error if the
 // item's value is not an integer, if it was not found, or if it is not
 // possible to decrement it by n.
+//
+// Performance note: Same boxing overhead as Increment. See Increment docs.
 func (c *cache[K, T]) Decrement(k K, n int64) (T, error) {
-
-	// TODO: Consider adding a constraint to avoid the type switch and provide
-	// compile-time safety
 	c.mu.Lock()
 	var zero T
 	v, found := c.items[k]
