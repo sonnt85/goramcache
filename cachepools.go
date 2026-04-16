@@ -116,7 +116,7 @@ func (sc *CachePools[K, T]) Get(k K) (T, bool) {
 
 func (sc *CachePools[K, T]) Keys() (keys []K) {
 	keys = make([]K, 0)
-	for i, _ := range sc.cs {
+	for i := range sc.cs {
 		keys = append(keys, sc.cs[i].Keys()...)
 	}
 	return keys
@@ -199,7 +199,7 @@ func (sc *CachePools[K, T]) LoadFile(fname string) error {
 
 func (sc *CachePools[K, T]) Save(w io.Writer) (err error) {
 	c := NewCache[K, T](NoExpiration, NoExpirationCheck)
-	for i, _ := range sc.cs {
+	for i := range sc.cs {
 		sc.cs[i].mu.RLock()
 		defer sc.cs[i].mu.RUnlock()
 		now := time.Now().UnixNano()

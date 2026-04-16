@@ -409,33 +409,33 @@ func (c *cache[K, T]) Increment(k K, n int64) (T, error) {
 	var untypedValue interface{}
 
 	untypedValue = v.Object
-	switch untypedValue.(type) {
+	switch v := untypedValue.(type) {
 	case int:
-		untypedValue = untypedValue.(int) + int(n)
+		untypedValue = v + int(n)
 	case int8:
-		untypedValue = untypedValue.(int8) + int8(n)
+		untypedValue = v + int8(n)
 	case int16:
-		untypedValue = untypedValue.(int16) + int16(n)
+		untypedValue = v + int16(n)
 	case int32:
-		untypedValue = untypedValue.(int32) + int32(n)
+		untypedValue = v + int32(n)
 	case int64:
-		untypedValue = untypedValue.(int64) + n
+		untypedValue = v + n
 	case uint:
-		untypedValue = untypedValue.(uint) + uint(n)
+		untypedValue = v + uint(n)
 	case uintptr:
-		untypedValue = untypedValue.(uintptr) + uintptr(n)
+		untypedValue = v + uintptr(n)
 	case uint8:
-		untypedValue = untypedValue.(uint8) + uint8(n)
+		untypedValue = v + uint8(n)
 	case uint16:
-		untypedValue = untypedValue.(uint16) + uint16(n)
+		untypedValue = v + uint16(n)
 	case uint32:
-		untypedValue = untypedValue.(uint32) + uint32(n)
+		untypedValue = v + uint32(n)
 	case uint64:
-		untypedValue = untypedValue.(uint64) + uint64(n)
+		untypedValue = v + uint64(n)
 	case float32:
-		untypedValue = untypedValue.(float32) + float32(n)
+		untypedValue = v + float32(n)
 	case float64:
-		untypedValue = untypedValue.(float64) + float64(n)
+		untypedValue = v + float64(n)
 	default:
 		c.mu.Unlock()
 		return zero, fmt.Errorf("The value for %+v is not an integer", k)
@@ -465,33 +465,33 @@ func (c *cache[K, T]) Decrement(k K, n int64) (T, error) {
 	var untypedValue interface{}
 
 	untypedValue = v.Object
-	switch untypedValue.(type) {
+	switch v := untypedValue.(type) {
 	case int:
-		untypedValue = untypedValue.(int) - int(n)
+		untypedValue = v - int(n)
 	case int8:
-		untypedValue = untypedValue.(int8) - int8(n)
+		untypedValue = v - int8(n)
 	case int16:
-		untypedValue = untypedValue.(int16) - int16(n)
+		untypedValue = v - int16(n)
 	case int32:
-		untypedValue = untypedValue.(int32) - int32(n)
+		untypedValue = v - int32(n)
 	case int64:
-		untypedValue = untypedValue.(int64) - n
+		untypedValue = v - n
 	case uint:
-		untypedValue = untypedValue.(uint) - uint(n)
+		untypedValue = v - uint(n)
 	case uintptr:
-		untypedValue = untypedValue.(uintptr) - uintptr(n)
+		untypedValue = v - uintptr(n)
 	case uint8:
-		untypedValue = untypedValue.(uint8) - uint8(n)
+		untypedValue = v - uint8(n)
 	case uint16:
-		untypedValue = untypedValue.(uint16) - uint16(n)
+		untypedValue = v - uint16(n)
 	case uint32:
-		untypedValue = untypedValue.(uint32) - uint32(n)
+		untypedValue = v - uint32(n)
 	case uint64:
-		untypedValue = untypedValue.(uint64) - uint64(n)
+		untypedValue = v - uint64(n)
 	case float32:
-		untypedValue = untypedValue.(float32) - float32(n)
+		untypedValue = v - float32(n)
 	case float64:
-		untypedValue = untypedValue.(float64) - float64(n)
+		untypedValue = v - float64(n)
 	default:
 		c.mu.Unlock()
 		return zero, fmt.Errorf("The value for %+v is not an integer", k)

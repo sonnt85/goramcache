@@ -25,10 +25,9 @@ func NewCacheFiles(rootDir string, defaultExpiration, errorAllowTimeExpiration t
 			os.Remove(v)
 		}
 	})
-	os.MkdirAll(rootDir, 0755)
-	// if nil != os.MkdirAll(rootDir, 0755) {
-	// 	return nil
-	// }
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		return nil
+	}
 	if !sutils.PathIsDir(rootDir) {
 		return nil
 	}

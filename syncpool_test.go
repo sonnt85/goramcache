@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-func t() {
-
-}
 func TestSyncpool(t *testing.T) {
 	var ga sync.WaitGroup
 	p := NewPool[*int](10, time.Second*10)
