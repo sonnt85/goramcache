@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"reflect"
 	"regexp"
 	"sync"
 	"time"
@@ -190,21 +189,28 @@ func (c *cache[K, T]) GetThenDelete(k K) (T, bool) {
 }
 
 func (c *cache[K, T]) GetOrCreateNew(k K) (T, bool) {
-	c.mu.RLock()
-	if v, ok := c.get(k); ok {
-		c.mu.RUnlock()
-		return v, false
-	} else {
-		var zero T
-		value := reflect.ValueOf(zero)
-		if value.Kind() == reflect.Pointer {
-			newvalue := reflect.New(value.Elem().Type())
-			zero = reflect.ValueOf(newvalue.Addr()).Interface().(T)
+	c.mu.Lock()
+	if item, ok := c.items[k]; ok {
+		if item.Expiration > 0 && time.Now().UnixNano() > item.Expiration {
+			// expired, treat as not found — evict and fall through to create
+			delete(c.items, k)
+		} else {
+			c.mu.Unlock()
+			return item.Object, false
 		}
-		c.mu.RUnlock()
-		c.SetDefault(k, zero)
-		return zero, true
 	}
+	var zero T
+	var e int64
+	d := c.defaultExpiration
+	if d > 0 {
+		e = time.Now().Add(d).UnixNano()
+	}
+	c.items[k] = Item[T]{
+		Object:     zero,
+		Expiration: e,
+	}
+	c.mu.Unlock()
+	return zero, true
 }
 
 // GetWithExpirationUpdate returns item and updates its cache expiration time
