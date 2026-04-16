@@ -81,3 +81,8 @@ func main() {
 ### Reference
 
 `godoc` or [http://godoc.org/github.com/sonnt85/goramcache](http://godoc.org/github.com/sonnt85/goramcache)
+
+## Author
+
+**sonnt85** — [thanhson.rf@gmail.com](mailto:thanhson.rf@gmail.com)
+
