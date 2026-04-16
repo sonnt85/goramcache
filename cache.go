@@ -192,17 +192,16 @@ func (c *cache[K, T]) GetThenDelete(k K) (T, bool) {
 func (c *cache[K, T]) GetOrCreateNew(k K) (T, bool) {
 	c.mu.RLock()
 	if v, ok := c.get(k); ok {
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return v, false
 	} else {
 		var zero T
 		value := reflect.ValueOf(zero)
 		if value.Kind() == reflect.Pointer {
-			// value.Elem()
 			newvalue := reflect.New(value.Elem().Type())
 			zero = reflect.ValueOf(newvalue.Addr()).Interface().(T)
 		}
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		c.SetDefault(k, zero)
 		return zero, true
 	}
@@ -311,6 +310,7 @@ func (c *cache[K, T]) IncrementExpiration(k K, d time.Duration) error {
 		e = time.Now().Add(d).UnixNano()
 	}
 	v.Expiration = e
+	c.items[k] = v
 
 	c.mu.Unlock()
 	return nil
@@ -504,7 +504,14 @@ func (c *cache[K, T]) DeleteRegex(rule string) {
 	var ok bool
 	re, _ := regexp.Compile(rule)
 
+	c.mu.RLock()
+	keys := make([]K, 0, len(c.items))
 	for k := range c.items {
+		keys = append(keys, k)
+	}
+	c.mu.RUnlock()
+
+	for _, k := range keys {
 		str, ok = any(k).(string)
 		if !ok {
 			continue

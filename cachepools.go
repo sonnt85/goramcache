@@ -143,7 +143,7 @@ func (sc *CachePools[K, T]) GetWithExpirationUpdate(k K, d time.Duration) (T, bo
 }
 
 func (sc *CachePools[K, T]) GetWithDefaultExpirationUpdate(k K) (T, bool) {
-	return sc.GetWithDefaultExpirationUpdate(k)
+	return sc.getpool(k).GetWithDefaultExpirationUpdate(k)
 }
 
 func (sc *CachePools[K, T]) Increment(k K, n int64) error {
