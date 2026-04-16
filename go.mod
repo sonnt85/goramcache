@@ -1,5 +1,5 @@
 module github.com/sonnt85/goramcache
 
-go 1.21
+go 1.25.0
 
-require golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8
+require golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
