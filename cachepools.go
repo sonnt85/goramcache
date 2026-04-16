@@ -30,74 +30,61 @@ type CachePools[K constraints.Ordered, T any] struct {
 }
 
 func djb33[K constraints.Ordered](seed uint32, k K) (retval uint32) {
-	str, ok := any(k).(string)
-	if !ok {
-		if i, ok := any(k).(uint32); ok {
-			return i
-		} else {
-			return //no pools
+	switch v := any(k).(type) {
+	case string:
+		var (
+			l = uint32(len(v))
+			d = 5381 + seed + l
+			i = uint32(0)
+		)
+		// Why is all this 5x faster than a for loop?
+		if l >= 4 {
+			for i < l-4 {
+				d = (d * 33) ^ uint32(v[i])
+				d = (d * 33) ^ uint32(v[i+1])
+				d = (d * 33) ^ uint32(v[i+2])
+				d = (d * 33) ^ uint32(v[i+3])
+				i += 4
+			}
 		}
-	}
-	var (
-		l = uint32(len(str))
-		d = 5381 + seed + l
-		i = uint32(0)
-	)
-	// Why is all this 5x faster than a for loop?
-	if l >= 4 {
-		for i < l-4 {
-			d = (d * 33) ^ uint32(str[i])
-			d = (d * 33) ^ uint32(str[i+1])
-			d = (d * 33) ^ uint32(str[i+2])
-			d = (d * 33) ^ uint32(str[i+3])
-			i += 4
+		switch l - i {
+		case 1:
+		case 2:
+			d = (d * 33) ^ uint32(v[i])
+		case 3:
+			d = (d * 33) ^ uint32(v[i])
+			d = (d * 33) ^ uint32(v[i+1])
+		case 4:
+			d = (d * 33) ^ uint32(v[i])
+			d = (d * 33) ^ uint32(v[i+1])
+			d = (d * 33) ^ uint32(v[i+2])
 		}
+		return d ^ (d >> 16)
+	case uint32:
+		return v
+	case int:
+		return uint32(v)
+	case int64:
+		return uint32(v ^ (v >> 32))
+	case uint64:
+		return uint32(v ^ (v >> 32))
+	case int32:
+		return uint32(v)
+	case uint16:
+		return uint32(v)
+	case int16:
+		return uint32(v)
+	case uint8:
+		return uint32(v)
+	case int8:
+		return uint32(v)
+	case float64:
+		return uint32(int64(v))
+	case float32:
+		return uint32(int32(v))
+	default:
+		return seed
 	}
-	switch l - i {
-	case 1:
-	case 2:
-		d = (d * 33) ^ uint32(str[i])
-	case 3:
-		d = (d * 33) ^ uint32(str[i])
-		d = (d * 33) ^ uint32(str[i+1])
-	case 4:
-		d = (d * 33) ^ uint32(str[i])
-		d = (d * 33) ^ uint32(str[i+1])
-		d = (d * 33) ^ uint32(str[i+2])
-	}
-	return d ^ (d >> 16)
-}
-
-// djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
-func djb33Old(seed uint32, k string) uint32 {
-	var (
-		l = uint32(len(k))
-		d = 5381 + seed + l
-		i = uint32(0)
-	)
-	// Why is all this 5x faster than a for loop?
-	if l >= 4 {
-		for i < l-4 {
-			d = (d * 33) ^ uint32(k[i])
-			d = (d * 33) ^ uint32(k[i+1])
-			d = (d * 33) ^ uint32(k[i+2])
-			d = (d * 33) ^ uint32(k[i+3])
-			i += 4
-		}
-	}
-	switch l - i {
-	case 1:
-	case 2:
-		d = (d * 33) ^ uint32(k[i])
-	case 3:
-		d = (d * 33) ^ uint32(k[i])
-		d = (d * 33) ^ uint32(k[i+1])
-	case 4:
-		d = (d * 33) ^ uint32(k[i])
-		d = (d * 33) ^ uint32(k[i+1])
-		d = (d * 33) ^ uint32(k[i+2])
-	}
-	return d ^ (d >> 16)
 }
 
 func (sc *CachePools[K, T]) getpool(k K) *cache[K, T] {

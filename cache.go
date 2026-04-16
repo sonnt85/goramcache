@@ -228,6 +228,12 @@ func (c *cache[K, T]) GetWithExpirationUpdate(k K, d time.Duration) (T, bool) {
 	c.mu.RUnlock()
 
 	c.mu.Lock()
+	// Re-check item still exists after upgrading to write lock (TOCTOU fix)
+	item, found = c.items[k]
+	if !found || (item.Expiration > 0 && time.Now().UnixNano() > item.Expiration) {
+		c.mu.Unlock()
+		return zero, false
+	}
 	if d == DefaultExpiration {
 		d = c.defaultExpiration
 	}
@@ -560,16 +566,20 @@ func (c *cache[K, T]) DeleteExpired() {
 func (c *cache[K, T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool) {
 	var evictedItems []keyAndValue[K, T]
 	var minExpiration int64
+	var hasExpired bool
 	now := time.Now().UnixNano()
 	minExpiration = math.MaxInt64
 	c.mu.Lock()
 	for k, v := range c.items {
 		if v.Expiration > 0 {
 			if (now + c.errorAllowTimeExpiration) > v.Expiration {
-				ov, evicted := c.delete(k)
-				if evicted {
-					evictedItems = append(evictedItems, keyAndValue[K, T]{k, ov})
+				// Collect evicted items manually instead of calling c.delete()
+				// to avoid SendBroadcast() under lock
+				if c.onEvicted != nil {
+					evictedItems = append(evictedItems, keyAndValue[K, T]{k, v.Object})
 				}
+				delete(c.items, k)
+				hasExpired = true
 			} else {
 				if v.Expiration < minExpiration {
 					minExpiration = v.Expiration
@@ -580,6 +590,10 @@ func (c *cache[K, T]) deleteExpired() (nextTimeCheck time.Time, needUpdate bool)
 	needUpdate = len(c.items) != 0
 	nextTimeCheck = time.UnixMicro(minExpiration / 1000)
 	c.mu.Unlock()
+	// Broadcast and invoke callbacks AFTER releasing lock to avoid deadlock
+	if hasExpired {
+		c.eventDeleteItem.SendBroadcast()
+	}
 	for _, v := range evictedItems {
 		c.onEvicted(v.key, v.value)
 	}
