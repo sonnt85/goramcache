@@ -1,7 +1,6 @@
 package goramcache
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -13,10 +12,10 @@ func TestSyncpool(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		ga.Add(1)
 		go func() {
+			defer ga.Done()
 			e := p.Get()
-			fmt.Printf("%v\n", *e)
 			defer p.Put(e)
-			ga.Done()
+			_ = *e
 		}()
 	}
 	ga.Wait()
